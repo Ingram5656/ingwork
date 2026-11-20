@@ -1,0 +1,81 @@
+# 推一个 v 开头的标签（比如 v0.1.0）后，GitHub 在 Windows 和 Mac 上各打一个安装包，
+# 放进一个 Release 草稿。说明取 CHANGELOG.md 里这一版的内容。检查一遍再在网页上点 Publish release。
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # 也可以在 Actions 页面手动跑一次，试试能不能打包
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+            rust_targets: ""
+          # 一个安装包同时支持 M 系列和 Intel
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: 装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 从 CHANGELOG.md 里取这一版的说明：从 "## [0.1.0]" 那一行到下一个 "## " 之前
+      - name: 取这一版的更新说明
+        id: notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          body=$(awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md)
+          if [ -z "$(echo "$body" | tr -d '[:space:]')" ]; then
+            body="见 CHANGELOG.md"
+          fi
+          {
+            echo "body<<INGWORK_NOTES_END"
+            echo "$body"
+            echo "INGWORK_NOTES_END"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: "ingwork ${{ github.ref_name }}"
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

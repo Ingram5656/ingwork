@@ -1,0 +1,107 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ingwork",
+  "version": "0.1.0",
+  "identifier": "com.ingram.ingwork",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "ingwork",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 864,
+        "minHeight": 540,
+        "center": true,
+        "resizable": true,
+        "decorations": false,
+        "visible": false
+      },
+      {
+        "label": "widget",
+        "title": "ingwork",
+        "create": false,
+        "width": 240,
+        "height": 92,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": false,
+        "focus": false
+      },
+      {
+        "label": "translate",
+        "title": "ingwork 翻译",
+        "create": false,
+        "width": 728,
+        "height": 220,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": false
+      },
+      {
+        "label": "capture",
+        "title": "ingwork 杂念箱",
+        "create": false,
+        "width": 608,
+        "height": 160,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "publisher": "Ingram & Claude",
+    "copyright": "Made by Ingram & Claude",
+    "category": "Productivity",
+    "shortDescription": "ingwork：课表、待办、番茄钟和翻译放在一起",
+    "longDescription": "ingwork 是 ing 系列的效率软件：今天的课和空档排成一条时间轴，待办绑在番茄上，按快捷键随时翻译、随手记下杂念。界面是深夜霓虹加液态玻璃，数据只存在你自己的电脑上。",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
+      }
+    }
+  }
+}

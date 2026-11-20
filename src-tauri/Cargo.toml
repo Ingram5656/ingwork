@@ -1,0 +1,43 @@
+[package]
+name = "ingwork"
+version = "0.1.0"
+description = "ingwork：课表、待办、番茄钟和翻译放在一起"
+authors = ["Ingram & Claude"]
+edition = "2021"
+
+[lib]
+name = "ingwork_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# 版本和写法都跟 ingclock、ingtranslate 保持一致，几个项目能共用下载好的依赖
+[dependencies]
+# macos-private-api：Mac 上透明窗口（小组件、翻译、杂念箱）要用；Windows 上不起作用
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rodio = "0.19"
+include_dir = "0.7"
+# 翻译小窗读写剪贴板；只要文字，不要图片支持（和 ingtranslate 一样）
+arboard = { version = "3", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+# 只用来取鼠标位置，好在鼠标所在的那块屏幕上呼出翻译和杂念箱（和 ingtranslate 一样）
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
