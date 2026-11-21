@@ -38,6 +38,25 @@ export function onEvent<T>(name: string, handler: (payload: T) => void): () => v
   };
 }
 
+/**
+ * 等下一帧画出来，最多等 100 毫秒。
+ * 窗口还没显示时，Mac 上的 WebView 根本不画它，requestAnimationFrame 永远不会触发
+ * （Windows 上的 WebView2 照样会触发）。翻译、杂念箱、小组件、刘海番茄和主窗口都是先藏着、
+ * 页面说"好了"再显示的，只等 requestAnimationFrame 的话，在 Mac 上就永远出不来
+ */
+export function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    requestAnimationFrame(finish);
+    window.setTimeout(finish, 100);
+  });
+}
+
 /** 调一个不关心返回值的命令。失败时只在控制台留一条记录。 */
 export function call(command: string, args?: Record<string, unknown>): void {
   invoke(command, args).catch((error) => console.error(`[ingwork] ${command}`, error));

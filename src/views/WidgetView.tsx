@@ -13,7 +13,7 @@ import { IS_MAC } from "../lib/platform";
 import { initSettingsSync, useSettings } from "../lib/settings";
 import { initStats, pomodorosToday, useStats } from "../lib/stats";
 import { currentTask, initTasks, useTasks } from "../lib/tasks";
-import { call } from "../lib/tauri";
+import { call, nextFrame } from "../lib/tauri";
 import { useLook } from "../lib/theme";
 import { initTimer, timer, useCountdown, useTimer } from "../lib/timer";
 import { patchWidget } from "../lib/windows";
@@ -137,7 +137,7 @@ export function WidgetView() {
     // 等字体加载好、量好大小、窗口改好，再让后端显示，免得先露出一个装不下的样子
     let alive = true;
     void document.fonts.ready
-      .then(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      .then(nextFrame)
       .then(async () => {
         if (!alive || !card.current) return;
         last = `${card.current.offsetWidth}x${card.current.offsetHeight}`;

@@ -15,7 +15,7 @@ import { fmtMinute, minuteOfDay, minutesText, nowAndNext } from "../lib/schedule
 import { initSettingsSync } from "../lib/settings";
 import { initStats, pomodorosToday, useStats } from "../lib/stats";
 import { currentTask, initTasks, useTasks } from "../lib/tasks";
-import { call, onEvent } from "../lib/tauri";
+import { call, nextFrame, onEvent } from "../lib/tauri";
 import { useLook } from "../lib/theme";
 import { initTimer, timer, useCountdown, useTimer } from "../lib/timer";
 
@@ -123,7 +123,7 @@ export function IslandView() {
     // 等字体加载好、画出第一帧再让后端显示，免得先闪一下没排好的样子
     let alive = true;
     void document.fonts.ready
-      .then(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      .then(nextFrame)
       .then(() => {
         if (alive) call("island_ready");
       });

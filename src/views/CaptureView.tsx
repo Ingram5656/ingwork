@@ -15,7 +15,7 @@ import { initPlanner, planner, usePlanner, usePlannerError } from "../lib/planne
 import { fitPopup, onPixelRatioChange } from "../lib/popups";
 import { initSettingsSync, useSettings } from "../lib/settings";
 import { currentTask, initTasks, useTasks } from "../lib/tasks";
-import { call, listening, onEvent } from "../lib/tauri";
+import { call, listening, nextFrame, onEvent } from "../lib/tauri";
 import { useLook } from "../lib/theme";
 import { initTimer, useTimer } from "../lib/timer";
 
@@ -45,7 +45,7 @@ export function CaptureView() {
     // 等呼出、收起的监听都登记好、画出第一帧，再告诉后端可以呼出了
     let alive = true;
     void listening()
-      .then(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      .then(nextFrame)
       .then(() => {
         if (alive) call("popup_ready", { label: LABEL });
       });
@@ -71,7 +71,7 @@ export function CaptureView() {
     // 呼出时窗口可能换了屏幕，系统缩放跟着变要等一会儿：马上量一次，稍后再量一次
     let later = 0;
     const offSummoned = onEvent<unknown>(`${LABEL}-summoned`, () => {
-      requestAnimationFrame(report);
+      void nextFrame().then(report);
       window.clearTimeout(later);
       later = window.setTimeout(report, 250);
     });

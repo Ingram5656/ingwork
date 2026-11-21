@@ -48,7 +48,7 @@ import { PHASES, getSettings, initSettingsSync, useSettings, type Page, type Pha
 import { accelKeys, initShortcuts } from "../lib/shortcuts";
 import { initStats } from "../lib/stats";
 import { currentTask, initTasks, useTasks } from "../lib/tasks";
-import { call, onEvent } from "../lib/tauri";
+import { call, nextFrame, onEvent } from "../lib/tauri";
 import { useLook } from "../lib/theme";
 import { initTimer, initTimerConfig, timer, useCountdown, useTimer } from "../lib/timer";
 import { checkUpdate, useUpdate } from "../lib/update";
@@ -151,8 +151,11 @@ export function MainView() {
     initWindows();
     initPopups();
     initReminders();
-    // 画好第一帧再让后端显示窗口，免得闪一下
-    const frame = requestAnimationFrame(() => call("frontend_ready"));
+    // 画好第一帧再让后端显示窗口，免得闪一下（Mac 上藏着的窗口不画，最多等 100 毫秒）
+    let alive = true;
+    void nextFrame().then(() => {
+      if (alive) call("frontend_ready");
+    });
     // 启动后悄悄查一次更新，有新版本时设置按钮上出小红点
     const check = window.setTimeout(() => void checkUpdate(true), 4000);
     // 从托盘里叫出来、电脑睡醒时，时间轴马上对准现在
@@ -161,7 +164,7 @@ export function MainView() {
     };
     document.addEventListener("visibilitychange", wake);
     return () => {
-      cancelAnimationFrame(frame);
+      alive = false;
       window.clearTimeout(check);
       document.removeEventListener("visibilitychange", wake);
     };
