@@ -249,9 +249,9 @@ pnpm tauri dev
 
 1. 生成一对密钥：`pnpm tauri signer generate -w ~/.tauri/ingwork.key`，设一个密码。私钥文件和密码自己收好，丢了以后的版本老用户就装不上了。
 2. 在 GitHub 仓库的 Settings → Secrets and variables → Actions 里加两个：`TAURI_SIGNING_PRIVATE_KEY`（私钥文件的内容）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（密码）。
-3. 把公钥（`~/.tauri/ingwork.key.pub` 的内容）填进 `src-tauri/src/update.rs` 的 `PUBKEY` 和 `tauri.conf.json` 的 `plugins.updater.pubkey`，再把 `bundle.createUpdaterArtifacts` 设成 `true`。
+3. 把公钥（`ingwork.key.pub` 的内容）填进 `src-tauri/src/update.rs` 的 `PUBKEY` 和 `tauri.conf.json` 的 `plugins.updater.pubkey`。现在填的是这个仓库的公钥，换了密钥要一起换。
 
-配好以后发的版本会多带一个 `latest.json` 和签名文件。装了这一版的人，下次发现新版本时点"安装"，下载、校验、装好、重启一气呵成。没配签名时，Windows 上下载并运行安装程序；Mac 上打开下载好的 `.dmg`，把新版拖进"应用程序"盖掉旧的。
+GitHub 打包时会用 `src-tauri/tauri.updater.conf.json` 多打一份带签名的更新包和 `latest.json`；自己电脑上用脚本打包不签名，不需要私钥。Secrets 没填的话 GitHub 打包会失败。装了这一版的人，下次发现新版本时点"安装"，下载、校验、装好、重启一气呵成。没配签名时，Windows 上下载并运行安装程序；Mac 上打开下载好的 `.dmg`，把新版拖进"应用程序"盖掉旧的。
 
 ### 在自己电脑上打包
 

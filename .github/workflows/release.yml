@@ -69,8 +69,9 @@ jobs:
             echo "INGWORK_NOTES_END"
           } >> "$GITHUB_OUTPUT"
 
-      # 自动更新用的签名：仓库的 Secrets 里填了私钥才签（见 README"在软件里直接装新版"）。
-      # 没填的话这两个是空的，tauri.conf.json 里 createUpdaterArtifacts 也要保持 false
+      # 自动更新用的签名：用仓库 Secrets 里的私钥签（见 README"在软件里直接装新版"）。
+      # tauri.updater.conf.json 打开 createUpdaterArtifacts，多打一份带签名的更新包和 latest.json。
+      # 只在这里打开，自己电脑上用脚本打包时没有私钥也能打
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,4 +83,4 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json

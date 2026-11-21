@@ -106,7 +106,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA0REZGNzgxNEU3OEQ3OUIKUldTYjEzaE9nZmZmQkRZSEM1WWxjeGxwVTFjSEYxUlhIalVZMWhRYXVWVG1mZWJVQUQ0YVloUVUK",
       "endpoints": [
         "https://github.com/Ingram5656/ingwork/releases/latest/download/latest.json"
       ],

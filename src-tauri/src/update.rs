@@ -6,7 +6,7 @@
 //!   （Windows 是 .exe，Mac 是 .dmg）交给用户装。
 //!
 //! 怎么开启自动更新见 README 的"自动更新"一节：生成一对签名密钥，私钥放进 GitHub 的仓库密钥，
-//! 公钥填进 PUBKEY，再把 tauri.conf.json 里的 createUpdaterArtifacts 打开。
+//! 公钥填在 PUBKEY 和 tauri.conf.json 里；GitHub 打包时用 tauri.updater.conf.json 打开 createUpdaterArtifacts。
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -23,7 +23,7 @@ const MANIFEST_URL: &str =
 
 /// 自动更新用的签名公钥（`pnpm tauri signer generate` 生成的 .pub 文件的内容）。
 /// 为空时用以前的方式更新。公钥本来就是公开的，可以写在代码里；私钥绝不能
-const PUBKEY: &str = "";
+const PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA0REZGNzgxNEU3OEQ3OUIKUldTYjEzaE9nZmZmQkRZSEM1WWxjeGxwVTFjSEYxUlhIalVZMWhRYXVWVG1mZWJVQUQ0YVloUVUK";
 
 /// 查到的自动更新，等用户点"立即更新"时用
 #[derive(Default)]
@@ -109,7 +109,10 @@ async fn check_seamless(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
     if !PUBKEY.is_empty() {
-        return check_seamless(&app).await;
+        // 最新的 Release 没带 latest.json（比如是没签名时打的包）就退回以前的方式
+        if let Ok(found) = check_seamless(&app).await {
+            return Ok(found);
+        }
     }
     let current = app.package_info().version.to_string();
     let resp = client(12)?
