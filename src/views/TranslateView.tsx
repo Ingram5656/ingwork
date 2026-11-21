@@ -23,7 +23,7 @@ import { IS_MAC } from "../lib/platform";
 import { fitPopup, onPixelRatioChange } from "../lib/popups";
 import { accelKeys } from "../lib/shortcuts";
 import { initSettingsSync, updateSettings, useSettings } from "../lib/settings";
-import { call, onEvent } from "../lib/tauri";
+import { call, listening, onEvent } from "../lib/tauri";
 import { useLook } from "../lib/theme";
 import { initTimer, useTimer } from "../lib/timer";
 
@@ -162,8 +162,16 @@ export function TranslateView() {
     initTimer();
     initPlanner();
     document.documentElement.classList.add("is-popup");
-    const frame = requestAnimationFrame(() => call("popup_ready", { label: LABEL }));
-    return () => cancelAnimationFrame(frame);
+    // 等呼出、收起的监听都登记好、画出第一帧，再告诉后端可以呼出了
+    let alive = true;
+    void listening()
+      .then(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      .then(() => {
+        if (alive) call("popup_ready", { label: LABEL });
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // 界面整体缩放

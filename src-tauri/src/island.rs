@@ -353,11 +353,6 @@ mod mac {
         }
     }
 
-    /// 翻译、杂念箱收起时用：刘海番茄开着，不能像平时那样把整个软件藏起来
-    pub fn yield_focus(app: &AppHandle) {
-        let _ = app.run_on_main_thread(|| unsafe { deactivate() });
-    }
-
     /// 后台线程：打开期间每 50 毫秒让主线程查一次鼠标
     fn start_polling(app: &AppHandle) {
         let state = app.state::<Island>();
@@ -517,14 +512,6 @@ pub fn island_wings(app: tauri::AppHandle, shown: bool) {
     mac::set_wings(&app, shown);
     #[cfg(not(target_os = "macos"))]
     let _ = (app, shown);
-}
-
-/// 翻译、杂念箱收起时，刘海番茄开着：只让出前台，不把整个软件藏起来
-pub fn yield_focus(app: &tauri::AppHandle) {
-    #[cfg(target_os = "macos")]
-    mac::yield_focus(app);
-    #[cfg(not(target_os = "macos"))]
-    let _ = app;
 }
 
 /// 刘海和窗口的大小。还没放好时是 null，页面等 island-geometry 事件

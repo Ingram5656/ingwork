@@ -15,7 +15,7 @@ import { initPlanner, planner, usePlanner, usePlannerError } from "../lib/planne
 import { fitPopup, onPixelRatioChange } from "../lib/popups";
 import { initSettingsSync, useSettings } from "../lib/settings";
 import { currentTask, initTasks, useTasks } from "../lib/tasks";
-import { call, onEvent } from "../lib/tauri";
+import { call, listening, onEvent } from "../lib/tauri";
 import { useLook } from "../lib/theme";
 import { initTimer, useTimer } from "../lib/timer";
 
@@ -42,8 +42,16 @@ export function CaptureView() {
     initTasks();
     initPlanner();
     document.documentElement.classList.add("is-popup");
-    const frame = requestAnimationFrame(() => call("popup_ready", { label: LABEL }));
-    return () => cancelAnimationFrame(frame);
+    // 等呼出、收起的监听都登记好、画出第一帧，再告诉后端可以呼出了
+    let alive = true;
+    void listening()
+      .then(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      .then(() => {
+        if (alive) call("popup_ready", { label: LABEL });
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useLayoutEffect(() => {

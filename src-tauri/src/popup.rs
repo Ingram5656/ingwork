@@ -7,10 +7,14 @@
 //!
 //! Mac 上有两处不一样：
 //! - 鼠标位置用 Tauri 自己的接口取（Windows 上沿用 ingtranslate 的 GetCursorPos）
-//! - 在别的软件里呼出、用完收起后，要把整个 ingwork 藏起来（相当于按 ⌘H），焦点才会回到原来的软件。
-//!   不然 ingwork 还是当前软件，只是看不见窗口，用户得再点一下原来的软件才能接着打字
+//! - 在别的软件里呼出时，先记下当时在最前面的是哪个软件；用完收起后把前台还给它，焦点才会回去，
+//!   不然 ingwork 还是当前软件，只是看不见窗口，用户得再点一下原来的软件才能接着打字。
+//!   以前的做法是把整个 ingwork 藏起来（相当于 ⌘H），但藏起来以后再呼出，系统不一定让 ingwork 回到前台，
+//!   小窗就出不来了；主窗口也会跟着一起冒出来
 
 use serde::Serialize;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicI32;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -77,9 +81,9 @@ pub struct Popups {
     read_clipboard: AtomicBool,
     /// 上次看到的剪贴板内容，没变就不重复填
     last_clip: Mutex<String>,
-    /// Mac：这次是从别的软件里呼出的（呼出时主窗口不在最前面）。收起后要把焦点还回去
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    from_outside: AtomicBool,
+    /// Mac：呼出时在最前面的那个软件的进程号（是 ingwork 自己时为 0）。收起后把前台还给它
+    #[cfg(target_os = "macos")]
+    previous: AtomicI32,
 }
 
 impl Default for Popups {
@@ -89,7 +93,8 @@ impl Default for Popups {
             capture: Slot::new(608.0, 160.0),
             read_clipboard: AtomicBool::new(true),
             last_clip: Mutex::new(read_clipboard()),
-            from_outside: AtomicBool::new(false),
+            #[cfg(target_os = "macos")]
+            previous: AtomicI32::new(0),
         }
     }
 }
@@ -243,11 +248,21 @@ fn show(app: &AppHandle, label: &str) -> Result<(), String> {
         *last = now;
     }
 
-    // 主窗口不在最前面，就是从别的软件里呼出的（Mac 上收起后要把焦点还回去）
-    let main_front = app.get_webview_window("main").map_or(false, |w| {
-        w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false)
-    });
-    popups.from_outside.store(!main_front, Ordering::SeqCst);
+    // Mac：记下现在在最前面的软件，收起时把前台还给它。
+    // 被 ⌘H 藏起来的 ingwork 要先显示回来（不抢前台），不然小窗出不来。
+    // 这一步排在主线程上，比下面的 show、set_focus 先跑
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || unsafe {
+            focus::unhide();
+            let pid = focus::frontmost_other();
+            handle
+                .state::<Popups>()
+                .previous
+                .store(pid, Ordering::SeqCst);
+        });
+    }
 
     *lock(&slot.shown_at) = Some(Instant::now());
     let _ = win.show();
@@ -293,36 +308,71 @@ pub fn hide(app: &AppHandle, label: &str) {
     });
 }
 
-/// Mac：小窗是从别的软件里呼出的，收起后把整个 ingwork 藏起来，焦点回到原来的软件。
-/// 主窗口在最前面、另一个小窗还开着、或者桌面小组件开着（藏起来它也会跟着消失）时不藏。
-/// 藏起来的窗口在点程序坞图标或再次打开 ingwork 时回来，和 ⌘H 一样
+/// Mac：小窗是从别的软件里呼出的，收起后把前台还给那个软件，可以接着打字。
+/// 另一个小窗还开着时不还（焦点在它身上）
 #[cfg(target_os = "macos")]
 fn give_focus_back(app: &AppHandle) {
-    let popups = app.state::<Popups>();
-    if !popups.from_outside.load(Ordering::SeqCst) {
-        return;
-    }
     let visible = |label: &str| {
         app.get_webview_window(label)
             .map_or(false, |w| w.is_visible().unwrap_or(false))
     };
-    if visible(TRANSLATE) || visible(CAPTURE) || visible(crate::widget::WIDGET) {
+    if visible(TRANSLATE) || visible(CAPTURE) {
         return;
     }
-    // 刘海番茄开着时也不能整个藏起来（它会跟着消失），只把前台让出去
-    if visible(crate::island::ISLAND) {
-        popups.from_outside.store(false, Ordering::SeqCst);
-        crate::island::yield_focus(app);
+    let pid = app.state::<Popups>().previous.swap(0, Ordering::SeqCst);
+    if pid == 0 {
         return;
     }
-    let main_front = app.get_webview_window("main").map_or(false, |w| {
-        w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false)
-    });
-    if main_front {
-        return;
+    let _ = app.run_on_main_thread(move || unsafe { focus::activate(pid) });
+}
+
+/// Mac 上和前台有关的几个系统调用。都只能在主线程上调
+#[cfg(target_os = "macos")]
+mod focus {
+    use objc2::runtime::{AnyObject, Bool};
+    use objc2::{class, msg_send};
+
+    /// 现在在最前面的软件的进程号；是 ingwork 自己或者取不到时返回 0
+    pub unsafe fn frontmost_other() -> i32 {
+        let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
+            return 0;
+        }
+        let front: *mut AnyObject = msg_send![workspace, frontmostApplication];
+        if front.is_null() {
+            return 0;
+        }
+        let pid: i32 = msg_send![front, processIdentifier];
+        if pid <= 0 || pid as u32 == std::process::id() {
+            0
+        } else {
+            pid
+        }
     }
-    popups.from_outside.store(false, Ordering::SeqCst);
-    let _ = app.hide();
+
+    /// 把前台交给进程号是 pid 的软件。它已经退出了就什么都不做
+    pub unsafe fn activate(pid: i32) {
+        let other: *mut AnyObject = msg_send![
+            class!(NSRunningApplication),
+            runningApplicationWithProcessIdentifier: pid
+        ];
+        if other.is_null() {
+            return;
+        }
+        let _: Bool = msg_send![other, activateWithOptions: 0usize];
+    }
+
+    /// ingwork 被 ⌘H 藏起来了：不抢前台地显示回来
+    pub unsafe fn unhide() {
+        let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        if ns_app.is_null() {
+            return;
+        }
+        let hidden: Bool = msg_send![ns_app, isHidden];
+        if hidden.as_bool() {
+            let _: () = msg_send![ns_app, unhideWithoutActivation];
+        }
+    }
 }
 
 /// 窗口事件：点到别的窗口就收起（点了图钉的不收）；Alt+F4 只是收起
