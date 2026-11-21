@@ -12,7 +12,7 @@ import { t, useLang } from "../lib/i18n";
 import { useNow } from "../lib/now";
 import { initPlanner, usePlanner } from "../lib/planner";
 import { fmtMinute, minuteOfDay, minutesText, nowAndNext } from "../lib/schedule";
-import { initSettingsSync } from "../lib/settings";
+import { initSettingsSync, useSettings } from "../lib/settings";
 import { initStats, pomodorosToday, useStats } from "../lib/stats";
 import { currentTask, initTasks, useTasks } from "../lib/tasks";
 import { call, nextFrame, onEvent } from "../lib/tauri";
@@ -149,6 +149,12 @@ export function IslandView() {
   useEffect(() => {
     call("island_wings", { shown: wings });
   }, [wings]);
+
+  // 展开那一下触控板震不震
+  const [settings] = useSettings();
+  useEffect(() => {
+    call("island_haptics", { on: settings.islandHaptics });
+  }, [settings.islandHaptics]);
 
   const open = hover || peek;
   const phaseName = t(PHASE_NAMES[state.phase]);

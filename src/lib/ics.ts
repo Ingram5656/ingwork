@@ -233,6 +233,15 @@ function coalesce(singles: RawEvent[]): CourseInput[] {
   return out;
 }
 
+/** 一节一节带日期的课（PDF、网页课表读出来的），按"同一门课、同一时间"合成每周上的课 */
+export function coursesFromDates(
+  list: { title: string; place: string; start: Date; startMin: number; endMin: number }[],
+): CourseInput[] {
+  return coalesce(
+    list.map((ev) => ({ ...ev, uid: "", rrule: null, exdates: [], recurrenceOf: null })),
+  );
+}
+
 export function parseIcs(text: string): IcsResult {
   const lines = unfold(text);
   const raw: RawEvent[] = [];

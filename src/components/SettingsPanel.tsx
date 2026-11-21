@@ -2,6 +2,7 @@
 // 分组下面不放小字说明，一个选项的名字要自己说得清楚。
 
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import {
   useEffect,
@@ -265,6 +266,22 @@ function SchedulePrefsPage({ settings, update }: PageProps) {
             label={t("离下节课不够一个番茄时提示改短这一段")}
             on={settings.gapHint}
             onChange={(gapHint) => update({ gapHint })}
+          />
+        </Row>
+      </Group>
+      <Group title={t("提醒")}>
+        <Row label={t("截止日期前一天晚上和当天早上提醒")}>
+          <Toggle
+            label={t("截止日期前一天晚上和当天早上提醒")}
+            on={settings.deadlineRemind}
+            onChange={(deadlineRemind) => update({ deadlineRemind })}
+          />
+        </Row>
+        <Row label={t("排进空档的任务到点时提醒")}>
+          <Toggle
+            label={t("排进空档的任务到点时提醒")}
+            on={settings.blockRemind}
+            onChange={(blockRemind) => update({ blockRemind })}
           />
         </Row>
       </Group>
@@ -716,7 +733,7 @@ function LookPage({
   );
 }
 
-function WidgetPage({ settings }: PageProps) {
+function WidgetPage({ settings, update }: PageProps) {
   const widget = settings.widget;
   const placed = widget.x !== null && widget.y !== null;
   const error = useWidgetError();
@@ -743,6 +760,15 @@ function WidgetPage({ settings }: PageProps) {
                 { value: "notch", label: t("刘海") },
               ]}
               onChange={(place) => patchWidget({ place })}
+            />
+          </Row>
+        ) : null}
+        {notch ? (
+          <Row label={t("展开时触控板轻震一下")}>
+            <Toggle
+              label={t("展开时触控板轻震一下")}
+              on={settings.islandHaptics}
+              onChange={(islandHaptics) => update({ islandHaptics })}
             />
           </Row>
         ) : null}
@@ -1071,7 +1097,59 @@ function DataGroup() {
           </div>
         </div>
       ) : null}
+      <BackupRow />
     </Group>
+  );
+}
+
+interface Restored {
+  tasks: number;
+  courses: number;
+  history: number;
+}
+
+/** 备份：导出成一个文件，或者从文件导回来（并进现在的数据，不覆盖） */
+function BackupRow() {
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const run = async (command: "backup_export" | "backup_import") => {
+    setNote("");
+    setError("");
+    setBusy(true);
+    try {
+      if (command === "backup_export") {
+        if (await invoke<boolean>(command)) setNote(t("已导出"));
+      } else {
+        const got = await invoke<Restored | null>(command);
+        if (got) {
+          setNote(
+            t("已导入：{n} 个任务、{m} 节课、{k} 条新的专注记录", {
+              n: got.tasks,
+              m: got.courses,
+              k: got.history,
+            }),
+          );
+        }
+      }
+    } catch (e) {
+      setError(tMsg(String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Row label={t("备份")}>
+      {error ? <span className="row__error">{error}</span> : note ? <span className="row__note">{note}</span> : null}
+      <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={() => void run("backup_import")}>
+        {t("导入")}
+      </button>
+      <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={() => void run("backup_export")}>
+        {t("导出")}
+      </button>
+    </Row>
   );
 }
 
@@ -1079,7 +1157,12 @@ function GeneralPage({ settings, update }: PageProps) {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [autostartError, setAutostartError] = useState("");
   const [version, setVersion] = useState("");
+  const [logNote, setLogNote] = useState("");
   const updateState = useUpdate();
+  const openLogs = () => {
+    setLogNote("");
+    invoke("log_open").catch((error) => setLogNote(tMsg(String(error))));
+  };
 
   useEffect(() => {
     let alive = true;
@@ -1180,6 +1263,14 @@ function GeneralPage({ settings, update }: PageProps) {
         ) : null}
       </Group>
       <DataGroup />
+      <Group title={t("日志")}>
+        <Row label={t("出错时的记录")}>
+          {logNote ? <span className="row__note">{logNote}</span> : null}
+          <button type="button" className="btn btn--ghost btn--sm" onClick={openLogs}>
+            {t("打开")}
+          </button>
+        </Row>
+      </Group>
       <Group title={t("更新")}>
         <Row label={t("软件更新")}>
           {updateNote ? <span className="row__note">{updateNote}</span> : null}

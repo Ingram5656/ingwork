@@ -1,0 +1,48 @@
+# 每次推到 main（或者开 Pull Request）都在 Windows 和 Mac 上各编译一遍、跑一遍测试。
+# 编译不过当场就能在 Actions 页面看到，不用等打标签发版、装到电脑上才发现。
+# 只检查，不打包、不发布。
+
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: 装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 类型检查 + 打包前端。Rust 编译时要把打包好的前端嵌进去，所以也得先有它
+      - name: 前端
+        run: pnpm build
+
+      # 编译整个后端并跑测试（logic.rs、reminders.rs、island.rs、timetable 等里的测试）
+      - name: 后端
+        run: cargo test --manifest-path src-tauri/Cargo.toml

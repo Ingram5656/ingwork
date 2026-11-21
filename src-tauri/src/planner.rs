@@ -112,6 +112,23 @@ pub struct Word {
     pub updated_at: u64,
 }
 
+/// 排进空档的一段：哪天几点到几点做哪个待办
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Block {
+    pub id: String,
+    /// "2026-11-21"
+    pub day: String,
+    /// 从零点算起的分钟
+    pub start: u16,
+    pub end: u16,
+    /// 对应的待办。待办删了这一段也留着，显示排的时候记下的名字
+    pub task_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
 macro_rules! entry {
     ($t:ty) => {
         impl Entry for $t {
@@ -132,6 +149,7 @@ entry!(Course);
 entry!(Deadline);
 entry!(Note);
 entry!(Word);
+entry!(Block);
 
 /// 存下来的全部内容，也是发给界面的内容
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -141,6 +159,8 @@ pub struct Store {
     pub deadlines: Vec<Deadline>,
     pub notes: Vec<Note>,
     pub words: Vec<Word>,
+    /// 排进空档的任务
+    pub blocks: Vec<Block>,
     /// 删掉的条目：id → 删除时刻
     pub removed: BTreeMap<String, u64>,
     pub saved_at: u64,
@@ -158,6 +178,8 @@ impl Store {
         self.notes.sort_by(|a, b| (a.at, &a.id).cmp(&(b.at, &b.id)));
         self.words
             .sort_by(|a, b| (a.added_at, &a.id).cmp(&(b.added_at, &b.id)));
+        self.blocks
+            .sort_by(|a, b| (&a.day, a.start, &a.id).cmp(&(&b.day, b.start, &b.id)));
     }
 
     fn remove_id(&mut self, id: &str, now: u64) {
@@ -166,6 +188,7 @@ impl Store {
         self.deadlines.retain(|x| x.id != id);
         self.notes.retain(|x| x.id != id);
         self.words.retain(|x| x.id != id);
+        self.blocks.retain(|x| x.id != id);
     }
 }
 
@@ -176,6 +199,7 @@ pub fn merge(a: &Store, b: &Store, now: u64) -> Store {
         deadlines: merge_entries(&a.deadlines, &b.deadlines, &removed),
         notes: merge_entries(&a.notes, &b.notes, &removed),
         words: merge_entries(&a.words, &b.words, &removed),
+        blocks: merge_entries(&a.blocks, &b.blocks, &removed),
         removed,
         saved_at: a.saved_at.max(b.saved_at),
     };
@@ -448,7 +472,7 @@ impl Planner {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn snapshot(&self) -> Store {
+    pub(crate) fn snapshot(&self) -> Store {
         self.lock().store.clone()
     }
 
@@ -460,6 +484,14 @@ impl Planner {
         let _lock = FileLock::acquire(&self.local, LOCK).ok_or_else(|| BUSY.to_string())?;
         inner.sync(Some(apply), now_ms())?;
         Ok(inner.store.clone())
+    }
+
+    /// 从备份恢复：把备份里的内容并进来。两边都有的条目按修改时间取新的，不会覆盖现在的数据
+    pub fn absorb(&self, incoming: &Store) -> Result<Store, String> {
+        self.change(|store, now| {
+            *store = merge(store, incoming, now);
+            Ok(())
+        })
     }
 
     fn poll(&self) -> Option<Store> {
@@ -757,6 +789,80 @@ pub fn word_review(
 }
 
 // ---------- 命令：删除（四种通用） ----------
+
+// ---------- 命令：把待办排进空档 ----------
+
+/// 最多留多少段。过去超过两周的会在排新的时候清掉
+const MAX_BLOCKS: usize = 300;
+const KEEP_BLOCK_DAYS: u64 = 14;
+
+/// 排进去的一段
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockInput {
+    pub day: String,
+    pub start: u16,
+    pub end: u16,
+    pub task_id: String,
+    pub title: String,
+}
+
+fn check_block(input: &BlockInput) -> Result<(), String> {
+    if !valid_date(&input.day) {
+        return Err("日期不对".to_string());
+    }
+    if input.end <= input.start || input.end > 24 * 60 {
+        return Err("结束要晚于开始".to_string());
+    }
+    Ok(())
+}
+
+/// 排进空档。可以一次排好几段（"帮我排"）。和已经排了的时间重叠的那段不排
+#[tauri::command(async)]
+pub fn blocks_add(
+    app: AppHandle,
+    planner: State<Planner>,
+    blocks: Vec<BlockInput>,
+) -> Result<Store, String> {
+    for input in &blocks {
+        check_block(input)?;
+    }
+    change(&app, &planner, |store, now| {
+        // 太久以前的清掉，不让文件一直长
+        let cutoff = now.saturating_sub(KEEP_BLOCK_DAYS * 86_400_000);
+        let old: Vec<String> = store
+            .blocks
+            .iter()
+            .filter(|b| b.updated_at < cutoff)
+            .map(|b| b.id.clone())
+            .collect();
+        for id in old {
+            store.remove_id(&id, now);
+        }
+        for (i, input) in blocks.iter().enumerate() {
+            let overlaps = store
+                .blocks
+                .iter()
+                .any(|b| b.day == input.day && b.start < input.end && input.start < b.end);
+            if overlaps {
+                continue;
+            }
+            if store.blocks.len() >= MAX_BLOCKS {
+                return Err("排得太多了，先删掉一些".to_string());
+            }
+            store.blocks.push(Block {
+                id: new_id('b', now + i as u64),
+                day: input.day.clone(),
+                start: input.start,
+                end: input.end,
+                task_id: input.task_id.clone(),
+                title: input.title.trim().chars().take(80).collect(),
+                updated_at: now,
+            });
+        }
+        Ok(())
+    })
+}
 
 #[tauri::command(async)]
 pub fn planner_remove(

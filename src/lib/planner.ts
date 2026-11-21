@@ -53,14 +53,30 @@ export interface Word {
   reviewedAt: number;
 }
 
+/** 排进空档的一段：哪天几点到几点做哪个待办 */
+export interface Block {
+  id: string;
+  /** "2026-11-21" */
+  day: string;
+  /** 从零点算起的分钟 */
+  start: number;
+  end: number;
+  taskId: string;
+  /** 排的时候待办的名字。待办删了也照样显示 */
+  title: string;
+}
+
+export type BlockInput = Omit<Block, "id">;
+
 export interface PlannerStore {
   courses: Course[];
   deadlines: Deadline[];
   notes: Note[];
   words: Word[];
+  blocks: Block[];
 }
 
-let store: PlannerStore = { courses: [], deadlines: [], notes: [], words: [] };
+let store: PlannerStore = { courses: [], deadlines: [], notes: [], words: [], blocks: [] };
 let error = "";
 const listeners = new Set<() => void>();
 
@@ -81,6 +97,7 @@ function receive(next: PlannerStore): void {
     deadlines: next.deadlines ?? [],
     notes: next.notes ?? [],
     words: next.words ?? [],
+    blocks: next.blocks ?? [],
   };
   notify();
 }
@@ -144,6 +161,8 @@ export const planner = {
   noteToTask: (id: string) => run("note_to_task", { id }),
   addWord: (word: string, meaning: string) => run("word_add", { word, meaning }),
   reviewWord: (id: string, known: boolean) => run("word_review", { id, known }),
-  /** 删掉一节课、一个截止日期、一条杂念或一个生词 */
+  /** 把待办排进空档，可以一次排好几段。和已经排了的时间重叠的不排 */
+  addBlocks: (blocks: BlockInput[]) => run("blocks_add", { blocks }),
+  /** 删掉一节课、一个截止日期、一条杂念、一个生词或排进空档的一段 */
   remove: (id: string) => run("planner_remove", { id }),
 };

@@ -1,16 +1,16 @@
-// 上课提醒：课前几分钟发一条系统通知。
+// 提醒：上课前几分钟、截止日期前一天晚上和当天早上、排进空档的任务到点，各发一条系统通知。
 // 这里只负责排时间：算好今天和明天每节课该在几点提醒，交给后端；到点由后端发通知（见 reminders.rs）。
 // 主窗口收起来以后，网页的定时器会被系统大幅拖慢（Mac 上尤其狠），所以到点这件事不能靠网页。
 // 只有主窗口调。
 
 import { getPlanner, subscribePlanner } from "./planner";
-import { classesOn, fmtMinute } from "./schedule";
+import { classesOn, fmtMinute, parseDay } from "./schedule";
 import { getSettings, subscribeSettings } from "./settings";
 import { addDays, dayKey } from "./stats";
 import { t } from "./i18n";
 import { call } from "./tauri";
 
-interface Reminder {
+export interface Reminder {
   key: string;
   at: number;
   until: number;
@@ -19,6 +19,14 @@ interface Reminder {
 }
 
 let started = false;
+
+/** 排进空档的任务到点的提醒，由 blocks.ts 提供（避免互相引用，开始时登记进来） */
+let blockReminders: () => Reminder[] = () => [];
+
+export function provideBlockReminders(source: () => Reminder[]): void {
+  blockReminders = source;
+  if (started) schedule();
+}
 let last = "";
 
 /** 某天第 minute 分钟的时刻（Unix 毫秒） */
@@ -45,11 +53,45 @@ function schedule(): void {
       }
     }
   }
+  const { deadlineRemind } = getSettings();
+  if (deadlineRemind) {
+    const now = Date.now();
+    for (const d of getPlanner().deadlines) {
+      if (d.done) continue;
+      const due = parseDay(d.due);
+      if (Number.isNaN(due.getTime())) continue;
+      const end = at(due, 24 * 60);
+      if (end <= now) continue;
+      const eve = addDays(due, -1);
+      // 前一天晚上 8 点
+      list.push({
+        key: `ddl|${d.id}|${d.due}|eve`,
+        at: at(eve, 20 * 60),
+        until: at(due, 0),
+        title: t("明天截止：{title}", { title: d.title }),
+        body: t("还剩一天，今晚能做多少做多少"),
+      });
+      // 当天早上 9 点
+      list.push({
+        key: `ddl|${d.id}|${d.due}|day`,
+        at: at(due, 9 * 60),
+        until: end,
+        title: t("今天截止：{title}", { title: d.title }),
+        body: t("今天就要交了"),
+      });
+    }
+  }
+  for (const block of blockReminders()) list.push(block);
   // 没变就不重复发
   const text = JSON.stringify([lang, list]);
   if (text === last) return;
   last = text;
   call("reminders_set", { list });
+}
+
+/** 别处的数据变了（比如排进空档的任务），重新排一次 */
+export function rescheduleReminders(): void {
+  if (started) schedule();
 }
 
 export function initReminders(): void {

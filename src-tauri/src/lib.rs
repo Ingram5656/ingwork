@@ -4,10 +4,12 @@
 
 mod ambient;
 mod awake;
+mod backup;
 mod island;
 mod legacy;
 mod link;
 mod location;
+mod logger;
 mod logic;
 mod planner;
 mod popup;
@@ -220,9 +222,14 @@ fn set_dock_hidden(app: AppHandle, hidden: bool) {
 }
 
 pub(crate) fn exit_app(app: &AppHandle) {
+    before_exit(app);
+    app.exit(0);
+}
+
+/// 退出或重启之前：把没走完的专注记下来，告诉 ingfy 下线了
+pub(crate) fn before_exit(app: &AppHandle) {
     left_focus(app, app.state::<Timer>().focused_so_far());
     app.state::<link::Link>().goodbye();
-    app.exit(0);
 }
 
 /// 执行 ingfy 灵动岛上点的按钮
@@ -705,6 +712,8 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        // 自动更新：公钥和地址在 update.rs 里，用到时才设，这里只装上插件
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Timer::new())
         .manage(Mutex::new(Texts::default()))
         .manage(Sound::spawn())
@@ -712,6 +721,7 @@ pub fn run() {
         .manage(widget::Placement::default())
         .manage(island::Island::default())
         .manage(reminders::Reminders::default())
+        .manage(update::Pending::default())
         .manage(link::Link::default())
         .manage(popup::Popups::default())
         .manage(translate::TranslateState::default())
@@ -729,6 +739,8 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .unwrap_or_else(|_| std::env::temp_dir().join("ingwork"));
+            // 日志：出错时记到本机的 logs/ingwork.log
+            logger::init(&local, &app.package_info().version.to_string());
             // 第一次打开：把 ingclock 的任务和专注记录接过来
             legacy::import_ingclock(&local);
             // 任务、专注记录、课表放在哪：默认本机，设置里可以换到网盘的同步文件夹
@@ -802,6 +814,7 @@ pub fn run() {
             island::island_apply,
             island::island_ready,
             island::island_wings,
+            island::island_haptics,
             island::island_geometry,
             tasks::tasks_get,
             tasks::task_add,
@@ -825,6 +838,7 @@ pub fn run() {
             planner::word_add,
             planner::word_review,
             planner::planner_remove,
+            planner::blocks_add,
             popup::popup_toggle,
             popup::popup_show,
             popup::popup_hide,
@@ -841,6 +855,10 @@ pub fn run() {
             location::data_dir_inspect,
             location::data_dir_set,
             location::data_dir_open,
+            backup::backup_export,
+            backup::backup_import,
+            logger::log_write,
+            logger::log_open,
             update::check_update,
             update::install_update,
         ])

@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { IS_MAC } from "./lib/platform";
+import { catchErrors } from "./lib/tauri";
 import "./styles.css";
 import { CaptureView } from "./views/CaptureView";
 import { IslandView } from "./views/IslandView";
@@ -13,6 +14,8 @@ import { TranslateView } from "./views/TranslateView";
 import { WidgetView } from "./views/WidgetView";
 
 const label = getCurrentWindow().label;
+// 没接住的错误都记进日志文件
+catchErrors(label);
 if (label === "widget") document.documentElement.classList.add("is-widget");
 if (label === "island") document.documentElement.classList.add("is-island");
 if (label === "translate" || label === "capture") document.documentElement.classList.add("is-popup");

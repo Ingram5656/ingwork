@@ -597,7 +597,7 @@ impl Tasks {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn snapshot(&self) -> Store {
+    pub(crate) fn snapshot(&self) -> Store {
         self.lock().store.clone()
     }
 
@@ -610,6 +610,14 @@ impl Tasks {
         let _lock = FileLock::acquire(&self.local, LOCK).ok_or_else(|| BUSY.to_string())?;
         inner.sync(Some(apply), now_ms())?;
         Ok(inner.store.clone())
+    }
+
+    /// 从备份恢复：把备份里的内容并进来。两边都有的条目按修改时间取新的，不会覆盖现在的数据
+    pub fn absorb(&self, incoming: &Store) -> Result<Store, String> {
+        self.change(|store, now| {
+            *store = merge(store, incoming, now);
+            Ok(())
+        })
     }
 
     /// 定时调用：文件被别的程序（AI、网盘）改过，或者有冲突副本，就合并进来，返回新内容。

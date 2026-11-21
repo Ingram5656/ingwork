@@ -5,8 +5,11 @@ import { useSyncExternalStore } from "react";
 
 export interface UpdateInfo {
   version: string;
+  /** 以前的方式：安装包的下载地址。自动更新时为空 */
   url: string;
   notes: string;
+  /** 自动更新：下好、装好后自己重启 */
+  seamless: boolean;
 }
 
 export type UpdateState =
@@ -50,7 +53,7 @@ export async function checkUpdate(quiet = false): Promise<void> {
   }
 }
 
-/** 下载并安装。成功的话软件会自己退出，让安装程序接手。 */
+/** 下载并安装。成功的话软件会自己退出（自动更新时会自己重启），让安装程序接手。 */
 export async function installUpdate(): Promise<void> {
   if (state.kind !== "available") return;
   const info = state.info;

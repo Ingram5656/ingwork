@@ -57,7 +57,34 @@ export function nextFrame(): Promise<void> {
   });
 }
 
-/** 调一个不关心返回值的命令。失败时只在控制台留一条记录。 */
+/** 调一个不关心返回值的命令。失败时在控制台和日志里各留一条记录。 */
 export function call(command: string, args?: Record<string, unknown>): void {
-  invoke(command, args).catch((error) => console.error(`[ingwork] ${command}`, error));
+  invoke(command, args).catch((error) => {
+    console.error(`[ingwork] ${command}`, error);
+    logError(`${command}: ${String(error)}`);
+  });
+}
+
+/** 记一条到日志文件（logs/ingwork.log）。记日志本身失败就算了 */
+export function logError(message: string): void {
+  invoke("log_write", { level: "error", message: message.slice(0, 2000) }).catch(() => {});
+}
+
+let catching = false;
+
+/**
+ * 网页里没接住的错误都记进日志。每个窗口启动时调一次。
+ * 带上窗口名，看日志时知道是哪个窗口出的错
+ */
+export function catchErrors(label: string): void {
+  if (catching) return;
+  catching = true;
+  window.addEventListener("error", (event) => {
+    const where = event.filename ? ` (${event.filename.split("/").pop()}:${event.lineno})` : "";
+    logError(`${label}: ${event.message}${where}`);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
+    logError(`${label}: ${reason}`);
+  });
 }

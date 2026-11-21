@@ -134,6 +134,14 @@ export interface Settings {
   classLead: number;
   /** 离下节课不够一个完整番茄时，提示把这一段改短 */
   gapHint: boolean;
+  /** 截止日期前一天晚上、当天早上各提醒一次 */
+  /** Mac 上番茄放在刘海时，展开那一下触控板轻轻震一下 */
+  islandHaptics: boolean;
+  /** 第一次打开时的引导走完了（或者点了跳过） */
+  onboarded: boolean;
+  deadlineRemind: boolean;
+  /** 时间轴上排进空档的任务，到点提醒并设成当前任务 */
+  blockRemind: boolean;
   /** 专注时收起两边，只留时钟、下节课和杂念箱 */
   focusLayout: boolean;
 
@@ -205,6 +213,10 @@ export const DEFAULT_SETTINGS: Settings = {
   page: "today",
   classLead: 10,
   gapHint: true,
+  islandHaptics: true,
+  onboarded: false,
+  deadlineRemind: true,
+  blockRemind: true,
   focusLayout: true,
 
   trEngine: "google",
@@ -238,7 +250,10 @@ function normalize(saved: Partial<Settings>): Settings {
 function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    return normalize(raw ? (JSON.parse(raw) as Partial<Settings>) : {});
+    if (!raw) return normalize({});
+    const saved = JSON.parse(raw) as Partial<Settings>;
+    // 老用户升级上来不再走一遍第一次打开的引导
+    return normalize({ onboarded: true, ...saved });
   } catch {
     return normalize({});
   }

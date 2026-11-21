@@ -365,6 +365,35 @@ pub fn stats_get(stats: State<Stats>) -> StatsView {
 
 // 改东西的命令都用 command(async)，放到后台线程跑：它们要读写数据文件夹，还可能等文件锁，
 // 文件在网盘里、刚好要现下载时会等上好几秒。不加的话命令在主线程上跑，等的时候整个界面都卡住
+/// 备份用：全部专注记录（各台电脑的都在）
+pub fn export_records(app: &AppHandle) -> Vec<Record> {
+    app.try_state::<Stats>()
+        .map(|stats| stats.lock().records.clone())
+        .unwrap_or_default()
+}
+
+/// 从备份恢复：已经有的记录跳过，没有的写进一个单独的文件（history-backup.jsonl）。返回补了几条
+pub fn import_records(app: &AppHandle, incoming: &[Record]) -> Result<usize, String> {
+    let Some(stats) = app.try_state::<Stats>() else {
+        return Ok(0);
+    };
+    let count = {
+        let mut inner = stats.lock();
+        let fresh: Vec<Record> = tidy(incoming.to_vec())
+            .into_iter()
+            .filter(|r| inner.records.binary_search(r).is_err())
+            .collect();
+        append_lines(&inner.dir.join("history-backup.jsonl"), &fresh)
+            .map_err(|_| "专注记录没能恢复，请检查数据文件夹能不能写".to_string())?;
+        inner.reload();
+        fresh.len()
+    };
+    if count > 0 {
+        announce(app);
+    }
+    Ok(count)
+}
+
 /// 清空全部记录
 #[tauri::command(async)]
 pub fn stats_clear(app: AppHandle, stats: State<Stats>) -> Result<StatsView, String> {

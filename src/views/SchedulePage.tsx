@@ -4,13 +4,16 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
 } from "react";
 import { IconChevronLeft, IconChevronRight, IconUpload } from "../components/Icons";
 import { Segmented } from "../components/Segmented";
 import type { SheetSpec } from "../components/Sheet";
-import { parseIcs, type IcsResult } from "../lib/ics";
+import { parseIcs } from "../lib/ics";
+import { readPdf } from "../lib/pdf";
+import { blocksFromHtml, blocksFromPdf, blocksFromText, readTimetable, type TtBlock } from "../lib/timetable";
 import { t, tMsg, useLang } from "../lib/i18n";
 import { useNow } from "../lib/now";
 import {
@@ -248,36 +251,114 @@ function CourseForm({
 
 // ---------- 导入 ----------
 
+/** 读出来、还没导进去的课 */
+interface Found {
+  courses: CourseInput[];
+  /** .ics 里跳过的全天、跨天事件；表格里读不懂的行 */
+  skipped: number;
+  /** 表格来源（PDF、网页、粘贴）才有：改"第 1 周"时要重新算 */
+  blocks: TtBlock[] | null;
+  weekOne: string | null;
+  weekOneFound: boolean;
+}
+
+/** 课表文件最大多少 */
+const MAX_FILE = 10 * 1024 * 1024;
+
 function Importer({ hasCourses }: { hasCourses: boolean }) {
   useLang();
   const input = useRef<HTMLInputElement>(null);
-  const [found, setFound] = useState<IcsResult | null>(null);
+  const [found, setFound] = useState<Found | null>(null);
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [over, setOver] = useState(false);
+  const [pasting, setPasting] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  /** 表格来源统一走这里：认出课来就等着导，认不出说一声 */
+  const fromBlocks = (blocks: TtBlock[], label: string, weekOne: string | null = null) => {
+    const result = readTimetable(blocks, weekOne);
+    if (result.courses.length === 0) {
+      setFound(null);
+      setMessage(
+        blocks.some((b) => b.kind === "table")
+          ? t("表格里没认出课来。要有课名、星期几、开始和结束时间这几列")
+          : t("没找到课表。试试在课表网页上全选、复制，再粘到这里"),
+      );
+      return;
+    }
+    setName(label);
+    setPasting(false);
+    setMessage("");
+    setFound({
+      courses: result.courses,
+      skipped: result.skipped,
+      blocks,
+      weekOne: result.weekOne,
+      weekOneFound: weekOne !== null || result.weekOneFound,
+    });
+  };
 
   const read = async (file: File) => {
     setFound(null);
     setMessage("");
-    if (!/\.ics$/i.test(file.name)) {
-      setMessage(t("现在只认 .ics 日历文件。教务系统一般有「导出到日历」，导出来就是它"));
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
+    const lower = file.name.toLowerCase();
+    if (file.size > MAX_FILE) {
       setMessage(t("文件太大了，课表文件一般不到 1 MB"));
       return;
     }
     try {
-      const result = parseIcs(await file.text());
-      setName(file.name);
-      if (result.courses.length === 0) {
-        setMessage(t("这个文件里没有找到课。全天的事件不算课"));
+      if (lower.endsWith(".ics")) {
+        const result = parseIcs(await file.text());
+        setName(file.name);
+        if (result.courses.length === 0) {
+          setMessage(t("这个文件里没有找到课。全天的事件不算课"));
+          return;
+        }
+        setFound({ courses: result.courses, skipped: result.skipped, blocks: null, weekOne: null, weekOneFound: true });
         return;
       }
-      setFound(result);
+      if (lower.endsWith(".pdf")) {
+        setBusy(true);
+        let doc;
+        try {
+          doc = await readPdf(new Uint8Array(await file.arrayBuffer()));
+        } catch (e) {
+          setMessage(
+            String(e).includes("encrypted")
+              ? t("这个 PDF 加了密码，打开它另存一份没密码的再导")
+              : t("这个 PDF 读不懂。试试在课表网页上全选、复制，再粘到这里"),
+          );
+          return;
+        } finally {
+          setBusy(false);
+        }
+        if (doc.pages.every((p) => p.length === 0)) {
+          setMessage(t("这个 PDF 里没有文字，可能是扫描的图片。试试在课表网页上全选、复制，再粘到这里"));
+          return;
+        }
+        fromBlocks(blocksFromPdf(doc), file.name);
+        return;
+      }
+      if (/\.(html?|mhtml?)$/.test(lower)) {
+        fromBlocks(blocksFromHtml(await file.text()), file.name);
+        return;
+      }
+      if (/\.(csv|tsv|txt)$/.test(lower)) {
+        const text = await file.text();
+        fromBlocks(blocksFromText(lower.endsWith(".csv") ? text.replace(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/g, "\t").replace(/"/g, "") : text), file.name);
+        return;
+      }
+      setMessage(t("认得 .ics、.pdf、网页（.html）和表格（.csv）。别的格式可以在网页上复制表格粘进来"));
     } catch {
       setMessage(t("这个文件读不懂，换一个试试"));
     }
+  };
+
+  const changeWeekOne = (value: string) => {
+    if (!found?.blocks || !value) return;
+    const result = readTimetable(found.blocks, value);
+    setFound({ ...found, courses: result.courses, skipped: result.skipped, weekOne: result.weekOne, weekOneFound: true });
   };
 
   const commit = async (replace: boolean) => {
@@ -308,7 +389,7 @@ function Importer({ hasCourses }: { hasCourses: boolean }) {
       <input
         ref={input}
         type="file"
-        accept=".ics,text/calendar"
+        accept=".ics,.pdf,.html,.htm,.csv,.tsv,.txt,text/calendar,application/pdf,text/html"
         hidden
         onChange={(event: ChangeEvent<HTMLInputElement>) => {
           const file = event.target.files?.[0];
@@ -321,9 +402,30 @@ function Importer({ hasCourses }: { hasCourses: boolean }) {
           <div className="drop__title">{name}</div>
           <div className="drop__note">
             {t("找到 {n} 节课", { n: found.courses.length })}
-            {found.skipped > 0 ? t("，跳过了 {n} 个全天或跨天的事件", { n: found.skipped }) : ""}
+            {found.skipped > 0
+              ? found.blocks
+                ? t("，有 {n} 行没读懂", { n: found.skipped })
+                : t("，跳过了 {n} 个全天或跨天的事件", { n: found.skipped })
+              : ""}
           </div>
+          {found.blocks && found.weekOne ? (
+            <label className="drop__week">
+              <span>{t("第 1 周的周一")}</span>
+              <input
+                type="date"
+                className="field"
+                value={found.weekOne}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => changeWeekOne(event.target.value)}
+              />
+            </label>
+          ) : null}
+          {found.blocks && found.weekOne && !found.weekOneFound ? (
+            <div className="drop__note">{t("文件里没写第 1 周是哪天，先按下周一算的，不对就改一下")}</div>
+          ) : null}
           <div className="drop__actions">
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setFound(null)}>
+              {t("不导了")}
+            </button>
             {hasCourses ? (
               <>
                 <button type="button" className="btn btn--ghost btn--sm" onClick={() => void commit(false)}>
@@ -340,14 +442,47 @@ function Importer({ hasCourses }: { hasCourses: boolean }) {
             )}
           </div>
         </>
+      ) : pasting ? (
+        <>
+          <div className="drop__title">{t("粘贴课表")}</div>
+          <textarea
+            className="field drop__paste"
+            autoFocus
+            rows={4}
+            placeholder={t("在课表网页上全选、复制，粘到这里")}
+            onPaste={(event: ClipboardEvent<HTMLTextAreaElement>) => {
+              const html = event.clipboardData.getData("text/html");
+              const text = event.clipboardData.getData("text/plain");
+              if (!html && !text) return;
+              event.preventDefault();
+              setFound(null);
+              fromBlocks(html ? blocksFromHtml(html) : blocksFromText(text), t("粘贴的课表"));
+            }}
+          />
+          <div className="drop__actions">
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPasting(false)}>
+              {t("取消")}
+            </button>
+          </div>
+        </>
       ) : (
         <>
           <IconUpload />
-          <div className="drop__title">{t("把 .ics 文件拖到这里")}</div>
-          <div className="drop__note">{t("教务系统或课程表 App 导出的日历文件")}</div>
-          <button type="button" className="btn btn--primary btn--sm" onClick={() => input.current?.click()}>
-            {t("选择文件")}
-          </button>
+          <div className="drop__title">{t("把课表文件拖到这里")}</div>
+          <div className="drop__note">{t("学校给的 PDF、网页、.ics 日历文件都行")}</div>
+          <div className="drop__actions">
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPasting(true)}>
+              {t("粘贴")}
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              disabled={busy}
+              onClick={() => input.current?.click()}
+            >
+              {busy ? t("正在读") : t("选择文件")}
+            </button>
+          </div>
         </>
       )}
       {message ? <div className="drop__message">{message}</div> : null}

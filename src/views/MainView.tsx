@@ -29,6 +29,7 @@ import {
 } from "../components/Icons";
 import { Presence } from "../components/Presence";
 import { Segmented } from "../components/Segmented";
+import { Onboarding } from "../components/Onboarding";
 import { SettingsPanel, type Category } from "../components/SettingsPanel";
 import { Sheet, type SheetSpec } from "../components/Sheet";
 import { StatsPanel } from "../components/StatsPanel";
@@ -43,6 +44,7 @@ import { refreshNow } from "../lib/now";
 import { initPlanner } from "../lib/planner";
 import { IS_MAC } from "../lib/platform";
 import { initPopups, togglePopup } from "../lib/popups";
+import { initBlocks } from "../lib/blocks";
 import { initReminders } from "../lib/reminders";
 import { PHASES, getSettings, initSettingsSync, useSettings, type Page, type Phase } from "../lib/settings";
 import { accelKeys, initShortcuts } from "../lib/shortcuts";
@@ -151,6 +153,7 @@ export function MainView() {
     initWindows();
     initPopups();
     initReminders();
+    initBlocks();
     // 画好第一帧再让后端显示窗口，免得闪一下（Mac 上藏着的窗口不画，最多等 100 毫秒）
     let alive = true;
     void nextFrame().then(() => {
@@ -596,6 +599,15 @@ export function MainView() {
 
         <Presence show={historyOpen} onScrim={() => setHistoryOpen(false)}>
           <StatsPanel onClose={() => setHistoryOpen(false)} confirm={openSheet} closeConfirm={closeSheet} />
+        </Presence>
+
+        <Presence show={!settings.onboarded && !settingsOpen}>
+          <Onboarding
+            openSettings={(category) => {
+              setSettingsCategory(category);
+              setSettingsOpen(true);
+            }}
+          />
         </Presence>
 
         <Presence show={settingsOpen} onScrim={() => setSettingsOpen(false)}>

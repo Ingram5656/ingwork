@@ -69,9 +69,13 @@ jobs:
             echo "INGWORK_NOTES_END"
           } >> "$GITHUB_OUTPUT"
 
+      # 自动更新用的签名：仓库的 Secrets 里填了私钥才签（见 README"在软件里直接装新版"）。
+      # 没填的话这两个是空的，tauri.conf.json 里 createUpdaterArtifacts 也要保持 false
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: "ingwork ${{ github.ref_name }}"
