@@ -1,4 +1,4 @@
-// 窗口相关：桌面小组件的开关和样子、主窗口置顶和全屏。
+// 窗口相关：桌面小组件（Mac 上也可以放在刘海上）的开关和样子、主窗口置顶和全屏。
 // 这些都记在设置里，由主窗口负责告诉后端；小组件自己只改设置。
 
 import { invoke } from "@tauri-apps/api/core";
@@ -84,32 +84,59 @@ export function useIngfyIsland(): boolean {
   );
 }
 
+/** 小组件这次显示在刘海上（只有 Mac 有） */
+function onNotch(widget: WidgetSettings): boolean {
+  return IS_MAC && widget.place === "notch";
+}
+
+/** 后端没打开时：把开关拨回去，并把原因留给设置面板显示，不悄悄失败 */
+function failed(command: string, error: unknown): void {
+  console.error(`[ingwork] ${command}`, error);
+  if (getSettings().widget.open) {
+    setWidgetError(String(error));
+    patchWidget({ open: false });
+  }
+}
+
+/** 同一时间只有一个在路上：浮窗和刘海要先关一个再开另一个，不能交叉 */
+let pushing: Promise<void> = Promise.resolve();
+
 function pushWidget(): void {
+  pushing = pushing.then(applyWidget, applyWidget);
+}
+
+async function applyWidget(): Promise<void> {
   const { widget } = getSettings();
-  const size = WIDGET_SIZES[widget.size];
   const open = widget.open && !island;
-  invoke("widget_apply", {
-    spec: {
-      open,
-      width: size.width,
-      height: size.height,
-      x: widget.x,
-      y: widget.y,
-      onTop: widget.layer === "top",
-      locked: widget.locked,
-    },
-  })
-    .then(() => {
+  const notch = onNotch(widget);
+  const size = WIDGET_SIZES[widget.size];
+  const floatSpec = {
+    open: open && !notch,
+    width: size.width,
+    height: size.height,
+    x: widget.x,
+    y: widget.y,
+    onTop: widget.layer === "top",
+    locked: widget.locked,
+  };
+  // 先关掉不用的那个，再开要用的那个，托盘菜单上的字以后开的为准
+  if (notch) {
+    try {
+      await invoke("widget_apply", { spec: { ...floatSpec, open: false } });
+      await invoke("island_apply", { open });
       if (open) setWidgetError("");
-    })
-    .catch((error) => {
-      // 没打开就把开关拨回去，并把原因留给设置面板显示，不悄悄失败
-      console.error("[ingwork] widget_apply", error);
-      if (open && getSettings().widget.open) {
-        setWidgetError(String(error));
-        patchWidget({ open: false });
-      }
-    });
+    } catch (error) {
+      if (open) failed("island_apply", error);
+    }
+    return;
+  }
+  try {
+    if (IS_MAC) await invoke("island_apply", { open: false });
+    await invoke("widget_apply", { spec: floatSpec });
+    if (open) setWidgetError("");
+  } catch (error) {
+    if (open) failed("widget_apply", error);
+  }
 }
 
 let started = false;
@@ -125,7 +152,13 @@ export function initWindows(): void {
   let lastDockHidden = false;
   const sync = () => {
     const s = getSettings();
-    const key = JSON.stringify([s.widget.open && !island, s.widget.size, s.widget.layer, s.widget.locked]);
+    const key = JSON.stringify([
+      s.widget.open && !island,
+      s.widget.size,
+      s.widget.layer,
+      s.widget.locked,
+      onNotch(s.widget),
+    ]);
     // 位置只在创建窗口时用，拖动后存下来的新位置不用再发给后端；
     // 只有"位置被清空"（放回屏幕右下角）才要发
     const placed = s.widget.x !== null && s.widget.y !== null;

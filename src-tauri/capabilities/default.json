@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "主窗口、桌面小组件、翻译小窗和杂念箱能用的权限",
+  "description": "主窗口、桌面小组件、刘海番茄、翻译小窗和杂念箱能用的权限",
   "windows": [
     "main",
     "widget",
     "translate",
-    "capture"
+    "capture",
+    "island"
   ],
   "permissions": [
     "core:default",

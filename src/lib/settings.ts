@@ -17,6 +17,8 @@ export type CloseAction = "ask" | "tray" | "quit";
 export type ShortcutId = "toggle" | "skip" | "window" | "widget" | "translate" | "capture";
 export type WidgetSize = "small" | "medium";
 export type WidgetLayer = "top" | "desktop";
+/** Mac 上小组件显示在哪：桌面上的浮窗，还是刘海（灵动岛） */
+export type WidgetPlace = "float" | "notch";
 
 export type BgMode = "fluid" | "gradient" | "media";
 
@@ -37,6 +39,8 @@ export interface WidgetSettings {
   size: WidgetSize;
   /** 置顶悬浮，还是贴在桌面（在所有窗口下面） */
   layer: WidgetLayer;
+  /** Mac：显示成桌面浮窗还是刘海番茄。Windows 上没有刘海，一直是浮窗 */
+  place: WidgetPlace;
   /** 锁定：鼠标穿透，点不到它 */
   locked: boolean;
   /** 上次的位置（物理像素），null 是放到默认位置 */
@@ -194,7 +198,7 @@ export const DEFAULT_SETTINGS: Settings = {
     capture: IS_MAC ? "Control+Alt+I" : "Alt+N",
   },
 
-  widget: { open: false, size: "small", layer: "top", locked: false, x: null, y: null },
+  widget: { open: false, size: "small", layer: "top", place: "float", locked: false, x: null, y: null },
   alwaysOnTop: false,
   dockHidden: false,
 

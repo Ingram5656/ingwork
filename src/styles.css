@@ -4087,6 +4087,292 @@ html.is-popup #root {
   flex: none;
 }
 
+/* ---------- 21. 刘海番茄（Mac 的灵动岛） ---------- */
+
+/* 窗口是透明的，只画中间那块黑色 */
+html.is-island,
+html.is-island body,
+html.is-island #root {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/*
+ * 一块纯黑的形状，上沿贴着屏幕顶，和刘海连成一片。
+ * 收起：刘海那么高，两边各伸出 --wing（计时没开始时不伸出，整块就藏在刘海里）。
+ * 展开：往下长成 --panel-w × --panel-h 的面板。
+ * 大小都是后端按这块屏幕的刘海量好传过来的（见 island.rs）。
+ */
+.island {
+  --w: var(--notch-w);
+  --h: var(--notch-h);
+  --r: 10px;
+  position: fixed;
+  inset: 0;
+  font-family: var(--font);
+  color: #fff;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.island.has-wings {
+  --w: calc(var(--notch-w) + var(--wing) * 2);
+}
+
+/* 没有刘海的 Mac：菜单栏正中一颗胶囊，比菜单栏矮一点 */
+.island.is-pill {
+  --h: calc(var(--notch-h) - 4px);
+  --r: 14px;
+}
+
+.island.is-open {
+  --w: var(--panel-w);
+  --h: var(--panel-h);
+  --r: 28px;
+}
+
+.island__shape {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--w);
+  height: var(--h);
+  transform: translateX(-50%);
+  background: #000;
+  border-radius: 0 0 var(--r) var(--r);
+  transition:
+    width 0.42s cubic-bezier(0.22, 1.2, 0.36, 1),
+    height 0.42s cubic-bezier(0.22, 1.2, 0.36, 1),
+    border-radius 0.42s ease;
+}
+
+.island.is-pill .island__shape {
+  top: 2px;
+  border-radius: var(--r);
+}
+
+.island.is-pill.is-open .island__shape {
+  border-radius: 18px 18px var(--r) var(--r);
+}
+
+/* 上沿两角往外的内凹圆角，让黑色像是从屏幕边上流下来的 */
+.island__shoulder {
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 10px;
+}
+
+.island__shoulder--l {
+  left: -10px;
+  background: radial-gradient(circle at 0 100%, transparent 9.5px, #000 10px);
+}
+
+.island__shoulder--r {
+  right: -10px;
+  background: radial-gradient(circle at 100% 100%, transparent 9.5px, #000 10px);
+}
+
+.island.is-pill .island__shoulder {
+  display: none;
+}
+
+/* ---- 收起时：刘海两边 ---- */
+
+.island__wing {
+  position: absolute;
+  top: 0;
+  display: flex;
+  align-items: center;
+  width: var(--wing);
+  height: var(--notch-h);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.island.is-pill .island__wing {
+  height: calc(var(--notch-h) - 4px);
+}
+
+.island__wing--l {
+  left: 0;
+  padding-left: 14px;
+}
+
+.island__wing--r {
+  right: 0;
+  justify-content: flex-end;
+  padding-right: 14px;
+}
+
+.island.has-wings:not(.is-open) .island__wing {
+  opacity: 1;
+  transition-delay: 0.16s;
+}
+
+.island__ring {
+  flex: none;
+  display: block;
+}
+
+.island__ring circle:last-child {
+  transition: stroke-dashoffset 0.3s linear;
+}
+
+.island__mini-time {
+  display: flex;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.island__mini-time .time__d {
+  width: 0.64em;
+}
+
+.island.is-paused .island__mini-time,
+.island.is-paused .island__time {
+  opacity: 0.5;
+}
+
+/* ---- 展开后 ---- */
+
+.island__body {
+  position: absolute;
+  inset: var(--notch-h) 0 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 22px 16px;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.18s ease,
+    visibility 0s linear 0.18s;
+}
+
+.island.is-open .island__body {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 0.24s ease 0.14s,
+    visibility 0s;
+}
+
+.island__main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.island__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.island__label {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.62);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.island__time {
+  display: flex;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.island__tools {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.island__btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.island__btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.island__btn:active {
+  transform: scale(0.92);
+}
+
+.island__btn:focus-visible {
+  outline: 2px solid var(--c1);
+  outline-offset: 2px;
+}
+
+.island__btn--main {
+  background: var(--c1);
+  color: #14102a;
+}
+
+.island__btn--main:hover {
+  background: color-mix(in srgb, var(--c1) 85%, #fff);
+}
+
+.island__btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.island__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  min-width: 0;
+}
+
+.island__class {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.island__class b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.island__today {
+  flex: none;
+  margin-left: auto;
+}
+
 /* ---------- 15. 减弱动态效果 ---------- */
 
 @media (prefers-reduced-motion: reduce) {

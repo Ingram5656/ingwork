@@ -44,6 +44,7 @@ import {
   type ThemeChoice,
   type TranslateEngine,
   type WidgetLayer,
+  type WidgetPlace,
   type WidgetSize,
 } from "../lib/settings";
 import {
@@ -720,6 +721,8 @@ function WidgetPage({ settings }: PageProps) {
   const placed = widget.x !== null && widget.y !== null;
   const error = useWidgetError();
   const island = useIngfyIsland();
+  // Mac 上可以放在刘海上；放在刘海上时，大小、层、锁定、位置这些都用不上
+  const notch = IS_MAC && widget.place === "notch";
   let note = error ? tMsg(error) : "";
   if (!note && island && widget.open) note = t("ingfy 的灵动岛开着，番茄显示在那里");
   return (
@@ -729,51 +732,71 @@ function WidgetPage({ settings }: PageProps) {
           {note ? <span className="row__note">{note}</span> : null}
           <Toggle label={t("显示桌面小组件")} on={widget.open} onChange={toggleWidget} />
         </Row>
-        <Row label={t("大小")}>
-          <Segmented<WidgetSize>
-            small
-            label={t("大小")}
-            value={widget.size}
-            options={[
-              { value: "small", label: t("小") },
-              { value: "medium", label: t("中") },
-            ]}
-            onChange={(size) => patchWidget({ size })}
-          />
-        </Row>
-        <Row label={t("放在哪一层")}>
-          <Segmented<WidgetLayer>
-            small
-            label={t("放在哪一层")}
-            value={widget.layer}
-            options={[
-              { value: "top", label: t("置顶悬浮") },
-              { value: "desktop", label: t("贴在桌面") },
-            ]}
-            onChange={(layer) => patchWidget({ layer })}
-          />
-        </Row>
-        <Row label={t("锁定，鼠标穿过去点不到它")}>
-          <Toggle
-            label={t("锁定，鼠标穿过去点不到它")}
-            on={widget.locked}
-            disabled={!widget.open}
-            onChange={(locked) => patchWidget({ locked })}
-          />
-        </Row>
+        {IS_MAC ? (
+          <Row label={t("显示在")}>
+            <Segmented<WidgetPlace>
+              small
+              label={t("显示在")}
+              value={widget.place}
+              options={[
+                { value: "float", label: t("桌面浮窗") },
+                { value: "notch", label: t("刘海") },
+              ]}
+              onChange={(place) => patchWidget({ place })}
+            />
+          </Row>
+        ) : null}
+        {notch ? null : (
+          <>
+            <Row label={t("大小")}>
+              <Segmented<WidgetSize>
+                small
+                label={t("大小")}
+                value={widget.size}
+                options={[
+                  { value: "small", label: t("小") },
+                  { value: "medium", label: t("中") },
+                ]}
+                onChange={(size) => patchWidget({ size })}
+              />
+            </Row>
+            <Row label={t("放在哪一层")}>
+              <Segmented<WidgetLayer>
+                small
+                label={t("放在哪一层")}
+                value={widget.layer}
+                options={[
+                  { value: "top", label: t("置顶悬浮") },
+                  { value: "desktop", label: t("贴在桌面") },
+                ]}
+                onChange={(layer) => patchWidget({ layer })}
+              />
+            </Row>
+            <Row label={t("锁定，鼠标穿过去点不到它")}>
+              <Toggle
+                label={t("锁定，鼠标穿过去点不到它")}
+                on={widget.locked}
+                disabled={!widget.open}
+                onChange={(locked) => patchWidget({ locked })}
+              />
+            </Row>
+          </>
+        )}
       </Group>
-      <Group>
-        <Row label={t("位置")}>
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            disabled={!placed}
-            onClick={() => patchWidget({ x: null, y: null })}
-          >
-            {t("放回屏幕右下角")}
-          </button>
-        </Row>
-      </Group>
+      {notch ? null : (
+        <Group>
+          <Row label={t("位置")}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={!placed}
+              onClick={() => patchWidget({ x: null, y: null })}
+            >
+              {t("放回屏幕右下角")}
+            </button>
+          </Row>
+        </Group>
+      )}
     </>
   );
 }

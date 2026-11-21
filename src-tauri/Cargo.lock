@@ -2109,6 +2109,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "include_dir",
+ "objc2",
  "reqwest 0.12.28",
  "rodio",
  "serde",

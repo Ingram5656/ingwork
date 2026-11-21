@@ -309,6 +309,12 @@ fn give_focus_back(app: &AppHandle) {
     if visible(TRANSLATE) || visible(CAPTURE) || visible(crate::widget::WIDGET) {
         return;
     }
+    // 刘海番茄开着时也不能整个藏起来（它会跟着消失），只把前台让出去
+    if visible(crate::island::ISLAND) {
+        popups.from_outside.store(false, Ordering::SeqCst);
+        crate::island::yield_focus(app);
+        return;
+    }
     let main_front = app.get_webview_window("main").map_or(false, |w| {
         w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false)
     });

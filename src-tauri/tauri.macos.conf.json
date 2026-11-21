@@ -68,6 +68,25 @@
         "maximizable": false,
         "minimizable": false,
         "visible": false
+      },
+      {
+        "label": "island",
+        "title": "ingwork",
+        "create": false,
+        "width": 480,
+        "height": 150,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": false,
+        "focus": false,
+        "acceptFirstMouse": true,
+        "visibleOnAllWorkspaces": true
       }
     ]
   },

@@ -36,6 +36,10 @@ windows = { version = "0.58", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# 刘海番茄：把窗口放到菜单栏上面、读刘海的位置。Tauri 自己也用它，版本跟着 Tauri 走
+objc2 = "0.6"
+
 [profile.release]
 codegen-units = 1
 lto = true

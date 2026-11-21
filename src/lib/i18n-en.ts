@@ -590,4 +590,12 @@ export const EN: Record<string, string> = {
   没有拿到译文: "No translation came back",
   模型没有返回内容: "The model returned nothing",
   没有要翻译的文字: "Nothing to translate",
+  // 刘海番茄（Mac）
+  显示在: "Show on",
+  桌面浮窗: "Desktop",
+  刘海: "Notch",
+  "接下来：{phase}": "Up next: {phase}",
+  "刘海番茄只有 Mac 上能用": "The notch timer is only available on Mac",
+  "刘海番茄没能打开，请再试一次": "The notch timer couldn't open. Please try again",
+  "刘海番茄的窗口配置找不到了": "The notch timer's window settings are missing",
 };

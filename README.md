@@ -158,8 +158,12 @@ Mac 上翻译和杂念箱没有沿用 Windows 的 `⌥Q`、`⌥N`：`⌥` 加字
 ## Mac 上和 Windows 有什么不一样
 
 - 窗口左上角用系统的红黄绿按钮。
+- 小组件可以放在刘海上（"设置 → 小组件 → 显示在 → 刘海"），像灵动岛一样：计时时刘海两边露出进度环和剩余时间，鼠标移上去往下展开，能暂停、跳过，还能看到下一节课。收起时鼠标穿透，不挡菜单栏。没有刘海的 Mac 上显示成菜单栏正中的一颗胶囊。
+
+  ![刘海番茄](docs/screenshots/island.png)
+
 - 托盘图标在屏幕顶部的菜单栏里，旁边一直显示剩余时间；点一下出菜单。"设置 → 通用"里可以设成只在菜单栏显示，不占程序坞。
-- 在别的软件里呼出翻译或杂念箱，用完收起后，ingwork 会整个藏起来（和 `⌘H` 一样），焦点回到你原来在用的软件，可以接着打字。点程序坞图标或菜单栏图标就能把主窗口叫回来。桌面小组件开着时不藏（藏起来小组件也会跟着消失），这时要点一下原来的软件。
+- 在别的软件里呼出翻译或杂念箱，用完收起后，ingwork 会整个藏起来（和 `⌘H` 一样），焦点回到你原来在用的软件，可以接着打字。点程序坞图标或菜单栏图标就能把主窗口叫回来。桌面小组件开着时不藏（藏起来小组件也会跟着消失），这时要点一下原来的软件；刘海番茄开着时也不藏，只是把前台还给原来的软件。
 - 和 ingfy 的联动用不了（ingfy 只有 Windows 版），别的功能都一样。Windows 和 Mac 可以用同一个 OneDrive 文件夹同步待办、记录和课表。
 - 从 ingtranslate 接设置这一步在 Mac 上只接引擎和接口，不接快捷键。
 
@@ -252,7 +256,7 @@ scripts/
   build-release.cmd       在 Windows 上打包
   build-release.sh        在 Mac 上打包
 src/
-  main.tsx                按窗口标签决定显示哪个界面：主窗口、小组件、翻译、杂念箱
+  main.tsx                按窗口标签决定显示哪个界面：主窗口、小组件、刘海番茄、翻译、杂念箱
   styles.css              全部样式。1–15 节是 ingclock 原有的，16 节以后是 ingwork 新加的
   views/
     MainView.tsx          主窗口：三页、顶栏、底栏
@@ -261,6 +265,7 @@ src/
     TranslateView.tsx     翻译小窗（从 ingtranslate 的 renderer/app.js 改写）
     CaptureView.tsx       杂念箱小窗
     WidgetView.tsx        桌面小组件
+    IslandView.tsx        Mac 的刘海番茄（灵动岛）
   components/
     Timeline.tsx          今天的时间轴
     TodayCards.tsx        空档提示、复习生词、下节课、杂念箱
@@ -276,11 +281,12 @@ src/
     …                     其余和 ingclock 一样
 src-tauri/
   tauri.conf.json         窗口和打包设置
-  tauri.macos.conf.json   Mac 上不一样的窗口（红黄绿按钮）和打包设置（.app、.dmg）
+  tauri.macos.conf.json   Mac 上不一样的窗口（红黄绿按钮、刘海番茄）和打包设置（.app、.dmg）
 src-tauri/src/
   lib.rs                  接线：命令、托盘、窗口
   planner.rs              课表、截止日期、杂念箱、生词本：存 planner.json，几台电脑共用时逐条合并
   popup.rs                翻译和杂念箱小窗：呼出、收起、大小跟着页面走
+  island.rs               Mac 的刘海番茄：窗口放到菜单栏上面、读刘海的位置、鼠标移上去展开
   translate.rs            三个翻译引擎（从 ingtranslate 搬过来）
   legacy.rs               第一次启动时接过 ingclock 的数据、读 ingtranslate 的设置
   logic.rs                纯逻辑，带测试：小窗尺寸、语言判断、按条目合并

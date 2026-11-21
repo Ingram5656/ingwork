@@ -3,6 +3,7 @@
 //! 翻译和杂念箱两个小窗在 popup.rs 和 translate.rs（从 ingtranslate 搬过来）。
 
 mod ambient;
+mod island;
 mod legacy;
 mod link;
 mod location;
@@ -129,6 +130,9 @@ fn apply_ambient(app: &AppHandle, snap: &Snapshot) {
 /// 小组件现在的状态：(开着, 锁着)。托盘菜单上的字跟着它变。
 struct WidgetFlags(Mutex<(bool, bool)>);
 
+/// 小组件现在显示在 Mac 的刘海上。刘海番茄不能锁定，托盘菜单里的"锁定"一直置灰
+static ON_NOTCH: AtomicBool = AtomicBool::new(false);
+
 /// 这次是怎么启动的。
 struct Launch {
     /// 开机自启带 --autostart，这时不弹主窗口
@@ -167,8 +171,10 @@ fn refresh_widget_menu(app: &AppHandle) {
     };
     let _ = tray_state.widget.set_text(widget_label);
     let _ = tray_state.lock.set_text(lock_label);
-    // 小组件没开时，"锁定"点了也没用，置灰
-    let _ = tray_state.lock.set_enabled(open);
+    // 小组件没开时，"锁定"点了也没用，置灰；刘海上的也不能锁
+    let _ = tray_state
+        .lock
+        .set_enabled(open && !ON_NOTCH.load(Ordering::SeqCst));
 }
 
 /// 小组件开关或锁定状态变了（widget.rs 调用）。
@@ -178,6 +184,13 @@ pub(crate) fn widget_changed(app: &AppHandle, open: bool, locked: bool) {
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = (open, locked);
     refresh_widget_menu(app);
+}
+
+/// 刘海番茄开了、关了（island.rs 调用）。托盘菜单上"显示 / 隐藏小组件"跟着它
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn island_changed(app: &AppHandle, open: bool) {
+    ON_NOTCH.store(open, Ordering::SeqCst);
+    widget_changed(app, open, false);
 }
 
 /// 离开了一段没走完的专注（跳过、重置、切阶段）：走过的时间记进统计，不算番茄。
@@ -672,6 +685,7 @@ pub fn run() {
         .manage(Sound::spawn())
         .manage(WidgetFlags(Mutex::new((false, false))))
         .manage(widget::Placement::default())
+        .manage(island::Island::default())
         .manage(link::Link::default())
         .manage(popup::Popups::default())
         .manage(translate::TranslateState::default())
@@ -758,6 +772,10 @@ pub fn run() {
             widget::widget_ready,
             widget::widget_fit,
             widget::widget_moved,
+            island::island_apply,
+            island::island_ready,
+            island::island_wings,
+            island::island_geometry,
             tasks::tasks_get,
             tasks::task_add,
             tasks::task_edit,
