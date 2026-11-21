@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "ingwork"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arboard",
  "include_dir",

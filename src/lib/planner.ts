@@ -68,7 +68,7 @@ function notify(): void {
   listeners.forEach((listener) => listener());
 }
 
-function subscribe(listener: () => void): () => void {
+export function subscribePlanner(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
@@ -92,7 +92,7 @@ function setError(message: string): void {
 }
 
 export function usePlanner(): PlannerStore {
-  return useSyncExternalStore(subscribe, () => store);
+  return useSyncExternalStore(subscribePlanner, () => store);
 }
 
 export function getPlanner(): PlannerStore {
@@ -101,7 +101,7 @@ export function getPlanner(): PlannerStore {
 
 /** 上一次操作没成功的原因（后端给的中文），空字符串是没出错 */
 export function usePlannerError(): string {
-  return useSyncExternalStore(subscribe, () => error);
+  return useSyncExternalStore(subscribePlanner, () => error);
 }
 
 export function clearPlannerError(): void {

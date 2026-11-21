@@ -4,6 +4,7 @@
 // - 专注布局里的"下节课"和"杂念箱"
 
 import { useEffect, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { imeBusy } from "../lib/platform";
 import { t, tMsg, useLang } from "../lib/i18n";
 import { useNow } from "../lib/now";
 import { planner, usePlanner, usePlannerError, type Word } from "../lib/planner";
@@ -227,6 +228,7 @@ export function InboxCard() {
           aria-label={t("记一条杂念")}
           onChange={(event: ChangeEvent<HTMLInputElement>) => setText(event.target.value)}
           onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+            if (imeBusy(event)) return;
             if (event.key === "Enter") void add();
           }}
         />

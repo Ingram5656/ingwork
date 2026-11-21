@@ -141,8 +141,13 @@ mod mac {
     const BEHAVIOR: usize = 1 | 16 | 64 | 256;
     /// 鼠标离开后等多少个 50 毫秒再收起，免得擦边时一开一合
     const LEAVE_TICKS: u32 = 6;
-    /// 每多少个 50 毫秒重新读一次屏幕（插拔显示器、改分辨率后要挪位置）
+    /// 每多少次轮询重新读一次屏幕（插拔显示器、改分辨率后要挪位置）
     const SCREEN_TICKS: u32 = 40;
+    /// 鼠标在刘海附近时每 50 毫秒查一次，离得远时每 200 毫秒查一次
+    const NEAR_POLL: Duration = Duration::from_millis(50);
+    const FAR_POLL: Duration = Duration::from_millis(200);
+    /// 展开后的面板下沿再往下这么多，还算"附近"
+    const FAR_MARGIN: f64 = 120.0;
 
     /// 刘海所在的屏幕和窗口该放在哪（Cocoa 坐标）
     #[derive(Clone, Copy, Debug, Default)]
@@ -166,6 +171,8 @@ mod mac {
         /// 收起时两边伸出来了没有（计时没开始时只剩刘海本身）
         wings: AtomicBool,
         expanded: AtomicBool,
+        /// 鼠标离刘海很远：轮询放慢，不用一秒查 20 次
+        far: AtomicBool,
         /// 鼠标离开了几个 50 毫秒
         away: AtomicU32,
         tick: AtomicU32,
@@ -295,7 +302,7 @@ mod mac {
         (mouse.x - p.center_x).abs() <= half && mouse.y <= p.top + 1.0 && mouse.y >= p.top - depth
     }
 
-    /// 每 50 毫秒在主线程上跑一次：鼠标进来就展开、接鼠标；离开一会儿就收起、穿透
+    /// 在主线程上查一次鼠标：进来就展开、接鼠标；离开一会儿就收起、穿透
     fn tick(app: &AppHandle) {
         let state = app.state::<Island>();
         let Some(win) = app.get_webview_window(ISLAND) else {
@@ -310,6 +317,12 @@ mod mac {
         };
         let mouse: Point = unsafe { msg_send![class!(NSEvent), mouseLocation] };
         let expanded = state.expanded.load(Ordering::SeqCst);
+        // 离屏幕上沿两百多点以外，或者不在刘海这块屏幕上：一时半会儿摸不到刘海
+        let reach = placement.geometry.width;
+        let far = (mouse.x - placement.center_x).abs() > reach
+            || mouse.y < placement.top - placement.geometry.height - FAR_MARGIN
+            || mouse.y > placement.top + 1.0;
+        state.far.store(far && !expanded, Ordering::SeqCst);
         let inside = hovering(
             &placement,
             mouse,
@@ -353,7 +366,7 @@ mod mac {
         }
     }
 
-    /// 后台线程：打开期间每 50 毫秒让主线程查一次鼠标
+    /// 后台线程：打开期间让主线程查鼠标，鼠标在附近时每 50 毫秒一次，远时每 200 毫秒一次
     fn start_polling(app: &AppHandle) {
         let state = app.state::<Island>();
         if state.polling.swap(true, Ordering::SeqCst) {
@@ -361,7 +374,8 @@ mod mac {
         }
         let app = app.clone();
         std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(50));
+            let far = app.state::<Island>().far.load(Ordering::SeqCst);
+            std::thread::sleep(if far { FAR_POLL } else { NEAR_POLL });
             let state = app.state::<Island>();
             if !state.open.load(Ordering::SeqCst) {
                 state.polling.store(false, Ordering::SeqCst);

@@ -614,14 +614,16 @@ impl Tasks {
 
     /// 定时调用：文件被别的程序（AI、网盘）改过，或者有冲突副本，就合并进来，返回新内容。
     pub fn poll(&self) -> Option<Store> {
-        let mut inner = self.lock();
-        // 大多数时候什么都没变，看一眼就返回
-        let quiet = !inner.pending
-            && sig(&inner.path()) == inner.known
-            && conflict_copies(&inner.dir).is_empty();
-        if quiet {
+        // 大多数时候什么都没变，看一眼就返回。看的时候不拿着锁：
+        // 网盘里的文件有时要现下载，看一眼也可能要等，别让界面上的操作陪着等
+        let (dir, path, known, pending) = {
+            let inner = self.lock();
+            (inner.dir.clone(), inner.path(), inner.known, inner.pending)
+        };
+        if !pending && sig(&path) == known && conflict_copies(&dir).is_empty() {
             return None;
         }
+        let mut inner = self.lock();
         let _lock = FileLock::acquire(&self.local, LOCK)?;
         match inner.sync(None::<NoApply>, now_ms()) {
             Ok(true) => Some(inner.store.clone()),
@@ -669,13 +671,15 @@ pub fn announce(app: &AppHandle, store: &Store) {
 
 /// 当前任务的名字。统计里记"这段专注是在做什么"用。
 pub fn current_name(app: &AppHandle) -> Option<String> {
-    let store = app.try_state::<Tasks>()?.snapshot();
-    let id = store.current?;
-    store
+    let tasks = app.try_state::<Tasks>()?;
+    let inner = tasks.lock();
+    let id = inner.store.current.as_ref()?;
+    inner
+        .store
         .tasks
-        .into_iter()
-        .find(|task| task.id == id)
-        .map(|task| task.name)
+        .iter()
+        .find(|task| &task.id == id)
+        .map(|task| task.name.clone())
 }
 
 /// 一段专注自然走完时调用：给当前任务加一个番茄。
@@ -702,12 +706,14 @@ pub(crate) fn add_task(app: &AppHandle, name: &str, estimate: u32) -> Result<Sto
     Ok(store)
 }
 
+// 改东西的命令都用 command(async)，放到后台线程跑：它们要读写数据文件夹，还可能等文件锁，
+// 文件在网盘里、刚好要现下载时会等上好几秒。不加的话命令在主线程上跑，等的时候整个界面都卡住
 #[tauri::command]
 pub fn tasks_get(tasks: State<Tasks>) -> Store {
     tasks.snapshot()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn task_add(
     app: AppHandle,
     tasks: State<Tasks>,
@@ -719,7 +725,7 @@ pub fn task_add(
     Ok(store)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn task_edit(
     app: AppHandle,
     tasks: State<Tasks>,
@@ -732,7 +738,7 @@ pub fn task_edit(
     Ok(store)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn task_set_finished(
     app: AppHandle,
     tasks: State<Tasks>,
@@ -745,7 +751,7 @@ pub fn task_set_finished(
 }
 
 /// 选当前任务。`id` 为空是不选任何任务。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn task_set_current(
     app: AppHandle,
     tasks: State<Tasks>,
@@ -756,14 +762,14 @@ pub fn task_set_current(
     Ok(store)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn task_remove(app: AppHandle, tasks: State<Tasks>, id: String) -> Result<Store, String> {
     let store = tasks.change(|store, now| store.remove(&id, now))?;
     announce(&app, &store);
     Ok(store)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tasks_reorder(
     app: AppHandle,
     tasks: State<Tasks>,
@@ -774,7 +780,7 @@ pub fn tasks_reorder(
     Ok(store)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tasks_clear_finished(app: AppHandle, tasks: State<Tasks>) -> Result<Store, String> {
     let store = tasks.change(|store, now| store.clear_finished(now))?;
     announce(&app, &store);

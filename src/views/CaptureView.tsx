@@ -11,6 +11,7 @@ import {
 } from "react";
 import { IconInbox } from "../components/Icons";
 import { t, tMsg, useLang } from "../lib/i18n";
+import { imeBusy } from "../lib/platform";
 import { initPlanner, planner, usePlanner, usePlannerError } from "../lib/planner";
 import { fitPopup, onPixelRatioChange } from "../lib/popups";
 import { initSettingsSync, useSettings } from "../lib/settings";
@@ -112,7 +113,7 @@ export function CaptureView() {
   };
 
   const onKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing) return;
+    if (imeBusy(event)) return;
     if (event.key === "Enter") {
       event.preventDefault();
       void save();

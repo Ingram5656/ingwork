@@ -137,6 +137,7 @@ pub async fn install_update(app: AppHandle, url: String) -> Result<(), String> {
     command
         .spawn()
         .map_err(|_| "安装程序没能启动，请到发布页手动下载".to_string())?;
-    app.exit(0);
+    // 和平常退出一样：先把没走完的专注记下来、告诉 ingfy，再退出
+    crate::exit_app(&app);
     Ok(())
 }

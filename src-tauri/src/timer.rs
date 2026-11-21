@@ -1,14 +1,21 @@
 //! 计时本身。放在 Rust 里，主窗口关了也照走；界面只负责显示。
 //!
 //! 计时按真实流逝的时间一小步一小步累加，不靠"每秒减一"。
-//! 两步之间隔了很久（电脑睡眠过）时，这段时间不算，等于睡眠时暂停。
+//! 电脑睡眠的那段时间不算，等于睡眠时暂停：
+//! - Windows：两步之间隔了很久，就当睡眠过
+//! - Mac：这里用的时钟本来就不算睡眠，不用猜
 
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-/// 两次走表之间超过这么久，就当电脑睡眠过，这段时间不计入。
-const SLEEP_GAP: Duration = Duration::from_secs(5);
+/// Windows：两次走表之间超过这么久，就当电脑睡眠过，这段时间不计入。
+/// Mac 上不用：时钟本来就不算睡眠；而软件在后台时系统会把线程拖慢（App Nap），
+/// 两次走表隔上好几秒是常事，当成睡眠丢掉的话，番茄就走慢了
+#[cfg(not(target_os = "macos"))]
+const SLEEP_GAP: Option<Duration> = Some(Duration::from_secs(5));
+#[cfg(target_os = "macos")]
+const SLEEP_GAP: Option<Duration> = None;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,7 +325,7 @@ impl Timer {
         let now = Instant::now();
         let mut dt = now.duration_since(g.last_tick);
         g.last_tick = now;
-        if dt > SLEEP_GAP {
+        if SLEEP_GAP.is_some_and(|gap| dt > gap) {
             dt = Duration::ZERO;
         }
         if !g.running {

@@ -1,6 +1,7 @@
 // 截止日期：考试、交作业。按日子排，三天以内的标出来。勾掉的不再显示。
 
 import { useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { imeBusy } from "../lib/platform";
 import { t, tMsg, useLang } from "../lib/i18n";
 import { useNow } from "../lib/now";
 import { clearPlannerError, planner, usePlanner, usePlannerError, type Deadline } from "../lib/planner";
@@ -78,6 +79,7 @@ export function Deadlines() {
   };
 
   const onKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (imeBusy(event)) return;
     if (event.key === "Enter") void add();
     if (event.key === "Escape") {
       event.stopPropagation();

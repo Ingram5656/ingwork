@@ -106,14 +106,29 @@ pub struct Link {
     last_write: AtomicU64,
     /// ingfy 的灵动岛开着
     island: AtomicBool,
+    /// ingfy 开着（不管灵动岛开没开）。没开时不用每秒都写，隔一会儿写一次心跳就够
+    present: AtomicBool,
+    /// 有一次到点还没写出去
+    finished_unsent: AtomicBool,
     /// 执行过的最后一个命令
     last_command: AtomicU64,
     command_mtime: Mutex<Option<SystemTime>>,
 }
 
 impl Link {
-    /// 把现在的状态写出去。状态变了、或者每秒走表时调用
-    pub fn write(&self, snap: &Snapshot, task: Option<String>) {
+    /// 把现在的状态写出去。状态变了、或者每秒走表时调用。
+    /// ingfy 没开时只写心跳（隔 2 秒一次），不每秒写盘；当前任务的名字用到时才去取
+    pub fn write(&self, snap: &Snapshot, task: impl FnOnce() -> Option<String>) {
+        if dir().is_none() {
+            return;
+        }
+        let quiet = !self.present.load(Ordering::SeqCst)
+            && !self.finished_unsent.load(Ordering::SeqCst)
+            && !self.needs_heartbeat();
+        if quiet {
+            return;
+        }
+        let task = task();
         let finished = self.finished.lock().unwrap_or_else(|e| e.into_inner());
         let status = Status {
             v: 1,
@@ -125,6 +140,7 @@ impl Link {
         if let Ok(text) = serde_json::to_string(&status) {
             write_atomic("ingclock.json", &text);
             self.last_write.store(now_ms(), Ordering::SeqCst);
+            self.finished_unsent.store(false, Ordering::SeqCst);
         }
     }
 
@@ -146,6 +162,7 @@ impl Link {
             next_minutes: ((snap.total_ms + 59_999) / 60_000) as u32,
             task,
         });
+        self.finished_unsent.store(true, Ordering::SeqCst);
     }
 
     /// 退出时删掉自己的文件，ingfy 马上就知道 ingclock 关了
@@ -157,10 +174,12 @@ impl Link {
 
     /// 读一次 ingfy.json。灵动岛开没开变了的话返回新的值
     pub fn poll_island(&self) -> Option<bool> {
-        let present = dir()
+        let status = dir()
             .and_then(|d| std::fs::read_to_string(d.join("ingfy.json")).ok())
             .and_then(|text| serde_json::from_str::<IngfyStatus>(&text).ok())
-            .is_some_and(|s| s.island && now_ms().saturating_sub(s.updated_at) < FRESH_MS);
+            .filter(|s| now_ms().saturating_sub(s.updated_at) < FRESH_MS);
+        self.present.store(status.is_some(), Ordering::SeqCst);
+        let present = status.is_some_and(|s| s.island);
         let before = self.island.swap(present, Ordering::SeqCst);
         (before != present).then_some(present)
     }

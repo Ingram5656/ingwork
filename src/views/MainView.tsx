@@ -332,6 +332,43 @@ export function MainView() {
     void toggleFullscreen().then(setFullscreen);
   }, []);
 
+  // 窗口没在前台时（在用别的软件），背景的色块停下不动：
+  // 毛玻璃要实时模糊它背后的东西，背景一动每一帧都要重算，一直开着很耗电
+  useEffect(() => {
+    const root = document.documentElement;
+    const update = () => root.classList.toggle("is-blurred", !document.hasFocus());
+    update();
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      root.classList.remove("is-blurred");
+    };
+  }, []);
+
+  // 用系统的办法进出全屏（Mac 左上角的绿色按钮、Windows 上拖动窗口）时，按钮和 Esc 也要跟着知道
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let off: (() => void) | null = null;
+    let alive = true;
+    void win
+      .onResized(() => {
+        void win
+          .isFullscreen()
+          .then(setFullscreen)
+          .catch(() => {});
+      })
+      .then((unlisten) => {
+        if (alive) off = unlisten;
+        else unlisten();
+      });
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, []);
+
   // ---------- 键盘 ----------
 
   useEffect(() => {

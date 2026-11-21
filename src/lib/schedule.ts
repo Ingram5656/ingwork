@@ -75,14 +75,19 @@ export function classesOn(courses: Course[], date: Date): Occurrence[] {
 }
 
 /** 时间轴从几点画到几点：至少 8 点到 20 点，课更早或更晚就往外扩到整点 */
-export function dayRange(classes: Occurrence[]): { start: number; end: number } {
+export function dayRange(classes: Occurrence[], now?: number): { start: number; end: number } {
   let start = 8 * 60;
   let end = 20 * 60;
   for (const c of classes) {
     start = Math.min(start, Math.floor(c.start / 60) * 60);
     end = Math.max(end, Math.ceil(c.end / 60) * 60);
   }
-  return { start, end: Math.min(end, 24 * 60) };
+  // 给了"现在"：早上 8 点前、晚上 8 点后也把现在画进去，后面至少留两个小时（晚上自习的时间也算空档）
+  if (now !== undefined) {
+    start = Math.min(start, Math.floor(now / 60) * 60);
+    end = Math.max(end, Math.floor(now / 60) * 60 + 120);
+  }
+  return { start: Math.max(0, start), end: Math.min(end, 24 * 60) };
 }
 
 /** 从 `from` 到 `until` 之间没课的空档，短于 `minLength` 分钟的不算 */

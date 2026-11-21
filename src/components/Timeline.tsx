@@ -46,7 +46,7 @@ export function Timeline({ onOpenSchedule }: Props) {
 
   const minute = minuteOfDay(now);
   const classes = classesOn(courses, now);
-  const range = dayRange(classes);
+  const range = dayRange(classes, minute);
   const span = range.end - range.start;
   const y = (m: number) => ((Math.max(range.start, Math.min(range.end, m)) - range.start) / span) * BODY_H;
   const place = (start: number, end: number): CSSProperties => ({

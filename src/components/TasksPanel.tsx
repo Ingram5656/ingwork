@@ -13,6 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { t, tMsg, useLang } from "../lib/i18n";
+import { imeBusy } from "../lib/platform";
 import {
   MAX_ESTIMATE,
   clearTaskError,
@@ -111,6 +112,7 @@ function EditRow({ task, onDone }: { task: Task; onDone: () => void }) {
         aria-label={t("任务名")}
         onChange={(event: ChangeEvent<HTMLInputElement>) => setName(event.target.value)}
         onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+          if (imeBusy(event)) return;
           if (event.key === "Enter") void save();
           if (event.key === "Escape") {
             // 只取消编辑，不让外面把整个面板关掉
@@ -289,6 +291,7 @@ export function TasksPanel({ docked, onClose, confirm, closeConfirm }: Props) {
           aria-label={t("要做什么")}
           onChange={(event: ChangeEvent<HTMLInputElement>) => setName(event.target.value)}
           onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+            if (imeBusy(event)) return;
             if (event.key === "Enter") void add();
           }}
         />

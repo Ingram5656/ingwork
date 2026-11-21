@@ -3,6 +3,7 @@
 //! 翻译和杂念箱两个小窗在 popup.rs 和 translate.rs（从 ingtranslate 搬过来）。
 
 mod ambient;
+mod awake;
 mod island;
 mod legacy;
 mod link;
@@ -10,6 +11,7 @@ mod location;
 mod logic;
 mod planner;
 mod popup;
+mod reminders;
 mod sound;
 mod stats;
 mod tasks;
@@ -217,7 +219,7 @@ fn set_dock_hidden(app: AppHandle, hidden: bool) {
     let _ = (app, hidden);
 }
 
-fn exit_app(app: &AppHandle) {
+pub(crate) fn exit_app(app: &AppHandle) {
     left_focus(app, app.state::<Timer>().focused_so_far());
     app.state::<link::Link>().goodbye();
     app.exit(0);
@@ -240,11 +242,23 @@ fn run_link_command(app: &AppHandle, command: &link::Command) {
     publish(app, &snap);
 }
 
+/// 托盘图标。Windows 用黑底方块（和应用图标一样）；
+/// Mac 菜单栏的习惯是单色"模板图标"，深色、浅色菜单栏系统会自动给它换颜色
+#[cfg(not(target_os = "macos"))]
 fn tray_icon_bytes(phase: Phase) -> &'static [u8] {
     match phase {
         Phase::Focus => &include_bytes!("../icons/tray-focus.png")[..],
         Phase::ShortBreak => &include_bytes!("../icons/tray-short.png")[..],
         Phase::LongBreak => &include_bytes!("../icons/tray-long.png")[..],
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn tray_icon_bytes(phase: Phase) -> &'static [u8] {
+    match phase {
+        Phase::Focus => &include_bytes!("../icons/tray-mac-focus.png")[..],
+        Phase::ShortBreak => &include_bytes!("../icons/tray-mac-short.png")[..],
+        Phase::LongBreak => &include_bytes!("../icons/tray-mac-long.png")[..],
     }
 }
 
@@ -280,10 +294,12 @@ fn tooltip(snap: &Snapshot, texts: &Texts) -> String {
 /// 调用时不能拿着任何锁：改托盘要回到主线程去做。
 fn publish(app: &AppHandle, snap: &Snapshot) {
     let _ = app.emit("timer-state", snap);
+    // Mac：计时在走时别让系统拖慢 ingwork
+    awake::keep(snap.running);
     apply_ambient(app, snap);
     // 告诉 ingfy（灵动岛）现在的状态
     if let Some(link) = app.try_state::<link::Link>() {
-        link.write(snap, tasks::current_name(app));
+        link.write(snap, || tasks::current_name(app));
     }
 
     let texts = current_texts(app);
@@ -308,6 +324,8 @@ fn publish(app: &AppHandle, snap: &Snapshot) {
         if phase_changed {
             if let Ok(icon) = Image::from_bytes(tray_icon_bytes(snap.phase)) {
                 let _ = tray.set_icon(Some(icon));
+                // 换了图标要重新说一次它是模板图标（只有 Mac 有用）
+                let _ = tray.set_icon_as_template(cfg!(target_os = "macos"));
             }
         }
         let _ = tray.set_tooltip(Some(tooltip(snap, &texts)));
@@ -370,11 +388,15 @@ fn spawn_data_watcher(app: AppHandle) {
         loop {
             std::thread::sleep(Duration::from_secs(1));
             beat = beat.wrapping_add(1);
-            tasks::poll_external(&app);
+            // 待办 2 秒、课表 4 秒、统计 6 秒看一次。数据文件夹多半在网盘里，看得太勤，
+            // 网盘的后台进程（尤其 Mac 上的 OneDrive）会一直忙；隔几秒同步过来也不耽误事
             if beat % 2 == 0 {
+                tasks::poll_external(&app);
+            }
+            if beat % 4 == 1 {
                 planner::poll_external(&app);
             }
-            if beat % 3 == 0 {
+            if beat % 6 == 3 {
                 stats::poll_external(&app);
             }
         }
@@ -387,6 +409,8 @@ fn spawn_ticker(app: AppHandle, timer: Timer) {
         std::thread::sleep(Duration::from_millis(200));
         beat = beat.wrapping_add(1);
         if beat % 5 == 0 {
+            // 上课提醒到点了没有
+            reminders::check(&app);
             // ingfy 的灵动岛开没开变了：告诉界面（小组件要不要让位）
             if let Some(island) = app.state::<link::Link>().poll_island() {
                 let _ = app.emit("ingfy-island", island);
@@ -438,6 +462,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     #[allow(deprecated)]
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("ingwork")
+        .icon_as_template(cfg!(target_os = "macos"))
         .menu(&menu)
         // Windows：左键打开主窗口，右键才出菜单。Mac：点一下就出菜单，这是菜单栏图标的习惯
         .menu_on_left_click(cfg!(target_os = "macos"))
@@ -686,6 +711,7 @@ pub fn run() {
         .manage(WidgetFlags(Mutex::new((false, false))))
         .manage(widget::Placement::default())
         .manage(island::Island::default())
+        .manage(reminders::Reminders::default())
         .manage(link::Link::default())
         .manage(popup::Popups::default())
         .manage(translate::TranslateState::default())
@@ -772,6 +798,7 @@ pub fn run() {
             widget::widget_ready,
             widget::widget_fit,
             widget::widget_moved,
+            reminders::reminders_set,
             island::island_apply,
             island::island_ready,
             island::island_wings,

@@ -19,7 +19,7 @@ import {
 import { IconClose, IconGear, IconPin } from "../components/Icons";
 import { t, useLang } from "../lib/i18n";
 import { initPlanner, planner, usePlanner } from "../lib/planner";
-import { IS_MAC } from "../lib/platform";
+import { IS_MAC, imeBusy } from "../lib/platform";
 import { fitPopup, onPixelRatioChange } from "../lib/popups";
 import { accelKeys } from "../lib/shortcuts";
 import { initSettingsSync, updateSettings, useSettings } from "../lib/settings";
@@ -400,7 +400,7 @@ export function TranslateView() {
   });
 
   const onFieldKey = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing) return;
+    if (imeBusy(event)) return;
     if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
       void run(input, true, target);

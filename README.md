@@ -287,6 +287,8 @@ src-tauri/src/
   planner.rs              课表、截止日期、杂念箱、生词本：存 planner.json，几台电脑共用时逐条合并
   popup.rs                翻译和杂念箱小窗：呼出、收起、大小跟着页面走
   island.rs               Mac 的刘海番茄：窗口放到菜单栏上面、读刘海的位置、鼠标移上去展开
+  awake.rs                Mac：计时进行中时不让系统把 ingwork 拖慢（App Nap）
+  reminders.rs            上课提醒：界面排好时间，到点由后台发通知
   translate.rs            三个翻译引擎（从 ingtranslate 搬过来）
   legacy.rs               第一次启动时接过 ingclock 的数据、读 ingtranslate 的设置
   logic.rs                纯逻辑，带测试：小窗尺寸、语言判断、按条目合并

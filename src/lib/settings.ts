@@ -221,23 +221,26 @@ export const DEFAULT_SETTINGS: Settings = {
 /** 存在 localStorage 里的键。发布以后不要改，改了老用户的设置就找不到了。 */
 const KEY = "ingwork.settings";
 
-function load(): Settings {
+/** 存下来的设置和默认值合并：老版本存的设置少了新加的项，用默认值补上 */
+function normalize(saved: Partial<Settings>): Settings {
   const base: Settings = { ...DEFAULT_SETTINGS, lang: systemLang() };
+  return {
+    ...base,
+    ...saved,
+    // 这几项里面还有一层，单独合并，以后往里加东西时老用户也有默认值
+    themes: { ...base.themes, ...saved.themes },
+    shortcuts: { ...base.shortcuts, ...saved.shortcuts },
+    widget: { ...base.widget, ...saved.widget },
+    trLlm: { ...base.trLlm, ...saved.trLlm },
+  };
+}
+
+function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return base;
-    const saved = JSON.parse(raw) as Partial<Settings>;
-    return {
-      ...base,
-      ...saved,
-      // 这几项里面还有一层，单独合并，以后往里加东西时老用户也有默认值
-      themes: { ...base.themes, ...saved.themes },
-      shortcuts: { ...base.shortcuts, ...saved.shortcuts },
-      widget: { ...base.widget, ...saved.widget },
-      trLlm: { ...base.trLlm, ...saved.trLlm },
-    };
+    return normalize(raw ? (JSON.parse(raw) as Partial<Settings>) : {});
   } catch {
-    return base;
+    return normalize({});
   }
 }
 
@@ -267,15 +270,16 @@ type Patch = Partial<Settings> | ((latest: Settings) => Partial<Settings>);
  * 要在某一项里面改一部分时传函数：update((s) => ({ widget: { ...s.widget, open: true } }))
  */
 export function updateSettings(patch: Patch): void {
-  const latest = load();
-  current = { ...latest, ...(typeof patch === "function" ? patch(latest) : patch) };
+  current = { ...current, ...(typeof patch === "function" ? patch(current) : patch) };
   try {
     localStorage.setItem(KEY, JSON.stringify(current));
   } catch (error) {
     console.error("[ingwork] 设置没存下来", error);
   }
   notify();
-  emit("settings-changed").catch(() => {});
+  // 新的设置直接放在通知里：Mac 上每个窗口的网页在不同的进程里，
+  // 收到通知时马上去读本地存储，可能还读到旧的
+  emit("settings-changed", current).catch(() => {});
 }
 
 let syncing = false;
@@ -284,8 +288,8 @@ let syncing = false;
 export function initSettingsSync(): void {
   if (syncing) return;
   syncing = true;
-  onEvent<unknown>("settings-changed", () => {
-    const next = load();
+  onEvent<Partial<Settings> | null>("settings-changed", (payload) => {
+    const next = payload && typeof payload === "object" ? normalize(payload) : load();
     if (JSON.stringify(next) !== JSON.stringify(current)) {
       current = next;
       notify();

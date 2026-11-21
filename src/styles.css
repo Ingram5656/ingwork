@@ -109,6 +109,11 @@ input {
   animation: breathe var(--breath, 18s) ease-in-out infinite alternate;
 }
 
+/* 窗口没在前台时停下：上面叠着毛玻璃，背景一动每一帧都要重新模糊，很耗电 */
+html.is-blurred .bg__blob {
+  animation-play-state: paused;
+}
+
 .bg__blob--a {
   width: 52vw;
   height: 52vw;

@@ -463,13 +463,16 @@ impl Planner {
     }
 
     fn poll(&self) -> Option<Store> {
-        let mut inner = self.lock();
-        let quiet = !inner.pending
-            && sig(&inner.path()) == inner.known
-            && conflict_copies(&inner.dir).is_empty();
-        if quiet {
+        // 大多数时候什么都没变，看一眼就返回。看的时候不拿着锁：
+        // 网盘里的文件有时要现下载，看一眼也可能要等，别让界面上的操作陪着等
+        let (dir, path, known, pending) = {
+            let inner = self.lock();
+            (inner.dir.clone(), inner.path(), inner.known, inner.pending)
+        };
+        if !pending && sig(&path) == known && conflict_copies(&dir).is_empty() {
             return None;
         }
+        let mut inner = self.lock();
         let _lock = FileLock::acquire(&self.local, LOCK)?;
         match inner.sync(None::<NoApply>, now_ms()) {
             Ok(true) => Some(inner.store.clone()),
@@ -523,7 +526,9 @@ pub fn planner_get(planner: State<Planner>) -> Store {
     planner.snapshot()
 }
 
-#[tauri::command]
+// 改东西的命令都用 command(async)，放到后台线程跑：它们要读写数据文件夹，还可能等文件锁，
+// 文件在网盘里、刚好要现下载时会等上好几秒。不加的话命令在主线程上跑，等的时候整个界面都卡住
+#[tauri::command(async)]
 pub fn course_add(
     app: AppHandle,
     planner: State<Planner>,
@@ -540,7 +545,7 @@ pub fn course_add(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn course_edit(
     app: AppHandle,
     planner: State<Planner>,
@@ -559,7 +564,7 @@ pub fn course_edit(
 }
 
 /// 导入一整份课表。`replace` 为真：先清掉原来的课
-#[tauri::command]
+#[tauri::command(async)]
 pub fn courses_import(
     app: AppHandle,
     planner: State<Planner>,
@@ -589,7 +594,7 @@ pub fn courses_import(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn courses_clear(app: AppHandle, planner: State<Planner>) -> Result<Store, String> {
     change(&app, &planner, |store, now| {
         let ids: Vec<String> = store.courses.iter().map(|c| c.id.clone()).collect();
@@ -602,7 +607,7 @@ pub fn courses_clear(app: AppHandle, planner: State<Planner>) -> Result<Store, S
 
 // ---------- 命令：截止日期 ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn deadline_add(
     app: AppHandle,
     planner: State<Planner>,
@@ -628,7 +633,7 @@ pub fn deadline_add(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn deadline_set_done(
     app: AppHandle,
     planner: State<Planner>,
@@ -651,7 +656,7 @@ pub fn deadline_set_done(
 
 // ---------- 命令：杂念箱 ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn note_add(app: AppHandle, planner: State<Planner>, text: String) -> Result<Store, String> {
     change(&app, &planner, |store, now| {
         if store.notes.len() >= MAX_NOTES {
@@ -669,7 +674,7 @@ pub fn note_add(app: AppHandle, planner: State<Planner>, text: String) -> Result
 }
 
 /// 杂念箱里的一条转成待办：加一个任务，再把这条删掉
-#[tauri::command]
+#[tauri::command(async)]
 pub fn note_to_task(app: AppHandle, planner: State<Planner>, id: String) -> Result<Store, String> {
     let text = planner
         .snapshot()
@@ -688,7 +693,7 @@ pub fn note_to_task(app: AppHandle, planner: State<Planner>, id: String) -> Resu
 // ---------- 命令：生词本 ----------
 
 /// 加一个生词。已经有了就更新释义，不重复加
-#[tauri::command]
+#[tauri::command(async)]
 pub fn word_add(
     app: AppHandle,
     planner: State<Planner>,
@@ -727,7 +732,7 @@ pub fn word_add(
 }
 
 /// 复习一次：记得就加一，不记得从头来
-#[tauri::command]
+#[tauri::command(async)]
 pub fn word_review(
     app: AppHandle,
     planner: State<Planner>,
@@ -753,7 +758,7 @@ pub fn word_review(
 
 // ---------- 命令：删除（四种通用） ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn planner_remove(
     app: AppHandle,
     planner: State<Planner>,

@@ -52,19 +52,24 @@ fn tidy(mut records: Vec<Record>) -> Vec<Record> {
     records
 }
 
-/// 电脑名。Windows 从环境变量读；Mac 读网络上用的那个名字（"Ingrams-MacBook-Pro" 这种，都是英文字母）
+/// 电脑名。Windows 从环境变量读；Mac 读网络上用的那个名字（"Ingrams-MacBook-Pro" 这种，都是英文字母）。
+/// Mac 上要另起一个系统命令去读，读一次就记住，不每记一次专注都读一遍
 fn computer_name() -> String {
-    if let Ok(name) = std::env::var("COMPUTERNAME") {
-        return name;
-    }
-    #[cfg(target_os = "macos")]
-    if let Ok(out) = std::process::Command::new("scutil")
-        .args(["--get", "LocalHostName"])
-        .output()
-    {
-        return String::from_utf8_lossy(&out.stdout).trim().to_string();
-    }
-    String::new()
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        if let Ok(name) = std::env::var("COMPUTERNAME") {
+            return name;
+        }
+        #[cfg(target_os = "macos")]
+        if let Ok(out) = std::process::Command::new("scutil")
+            .args(["--get", "LocalHostName"])
+            .output()
+        {
+            return String::from_utf8_lossy(&out.stdout).trim().to_string();
+        }
+        String::new()
+    })
+    .clone()
 }
 
 /// 这台电脑自己的记录文件名。电脑名里只留字母数字，免得有文件名不能用的字符
@@ -248,9 +253,15 @@ impl Stats {
 
     /// 定时调用：别的电脑记了新的（网盘同步过来了），或者清空了，就重新读，返回新内容
     fn poll(&self) -> Option<StatsView> {
+        // 先不拿锁看一眼文件夹：网盘里看一眼也可能要等，别让记专注、看统计陪着等
+        let (dir, pending) = {
+            let inner = self.lock();
+            (inner.dir.clone(), inner.pending)
+        };
+        let files = history_files(&dir);
         let changed = {
             let mut inner = self.lock();
-            if !inner.pending && history_files(&inner.dir) == inner.seen {
+            if !pending && inner.dir == dir && files == inner.seen {
                 return None;
             }
             inner.reload()
@@ -352,8 +363,10 @@ pub fn stats_get(stats: State<Stats>) -> StatsView {
     stats.view()
 }
 
+// 改东西的命令都用 command(async)，放到后台线程跑：它们要读写数据文件夹，还可能等文件锁，
+// 文件在网盘里、刚好要现下载时会等上好几秒。不加的话命令在主线程上跑，等的时候整个界面都卡住
 /// 清空全部记录
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stats_clear(app: AppHandle, stats: State<Stats>) -> Result<StatsView, String> {
     stats.clear()?;
     let view = stats.view();
