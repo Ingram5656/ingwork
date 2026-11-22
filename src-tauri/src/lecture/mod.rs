@@ -15,9 +15,11 @@ mod audio;
 // 命令要用完整路径登记（tauri 的命令宏不跟着 pub use 走），所以这个模块是 pub
 pub mod course;
 mod glossary;
+mod notes;
 mod stitch;
 
 use glossary::Glossary;
+use notes::Notes;
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -60,41 +62,6 @@ pub struct Segment {
     en: String,
     /// 还在翻译是 null；翻译失败是空字符串
     zh: Option<String>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Part {
-    title: String,
-    points: Vec<String>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Term {
-    en: String,
-    zh: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    note: Option<String>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Due {
-    title: String,
-    /// "2026-12-04"，老师没说具体哪天是 null
-    date: Option<String>,
-    quote: String,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Notes {
-    summary: String,
-    outline: Vec<Part>,
-    terms: Vec<Term>,
-    dues: Vec<Due>,
-    review: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -504,6 +471,8 @@ fn chat(
     });
     if json {
         body["response_format"] = serde_json::json!({ "type": "json_object" });
+        // 笔记可能挺长，别被默认的输出上限截断
+        body["max_tokens"] = serde_json::json!(8192);
     }
     let resp = client(timeout)
         .post(CHAT_URL)
@@ -558,82 +527,41 @@ fn translate(
     chat(key, &system, &user, false, 45)
 }
 
-fn notes_prompt(final_pass: bool, course: &str, date: &str) -> String {
-    format!(
-        "你在帮一个留学生整理大学课堂笔记。课程是\u{201c}{course}\u{201d}，上课日期是 {date}。\
-下面是这节课{when}的听写稿（英文，按时间顺序，每行前面是时刻），听写可能有错字，请结合上下文理解，专业词按正确写法。\
-用简体中文整理，只输出一个 JSON 对象，格式是：\
-{{\"summary\": \"这节课讲了什么，两三句话\", \
-\"outline\": [{{\"title\": \"主题\", \"points\": [\"要点\", ...]}}, ...], \
-\"terms\": [{{\"en\": \"英文术语\", \"zh\": \"中文\", \"note\": \"一句话解释，可以省略\"}}, ...], \
-\"dues\": [{{\"title\": \"作业、考试或截止的事\", \"date\": \"YYYY-MM-DD，老师没说具体哪天就填 null\", \"quote\": \"老师原话（英文，简短）\"}}, ...], \
-\"review\": [\"值得回去复习的地方\", ...]}}。\
-提纲按主题分段，每段三到六个要点，要点写成完整的短句，保留公式、数字和例子。\
-术语挑这节课真正重要的，最多十五个。dues 只放老师明确说了的作业、考试、截止日期，没有就是空数组；日期按上课日期推算（比如\u{201c}下周五\u{201d}）。{extra}",
-        when = if final_pass { "完整" } else { "到目前为止" },
-        extra = if final_pass {
-            ""
-        } else {
-            "课还没上完，summary 可以留空，提纲只整理已经讲到的部分。"
-        }
-    )
-}
-
-/// 按上课那台电脑的时区算的"时:分"
-fn clock(ms: u64, offset_min: i32) -> String {
-    let local = ms as i64 + offset_min as i64 * 60_000;
-    let mins = local.div_euclid(60_000);
-    format!(
-        "{:02}:{:02}",
-        mins.div_euclid(60).rem_euclid(24),
-        mins.rem_euclid(60)
-    )
-}
-
-/// 按上课那台电脑的时区算的日期
-fn local_date(ms: u64, offset_min: i32) -> String {
-    date_of((ms as i64 + offset_min as i64 * 60_000).max(0) as u64)
-}
-
-fn date_of(ms: u64) -> String {
-    let days = (ms / 86_400_000) as i64;
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-/// 整理一遍：成功返回笔记
+/// 整理一遍：成功返回笔记。
+/// 听课中有上一版笔记的话，只给新增的听写让模型合并；下课后用完整的听写稿从头整理
 fn summarize(
     key: &str,
     glossary: &str,
     session: &Session,
+    previous: Option<(Notes, usize)>,
     final_pass: bool,
 ) -> Result<(Notes, Usage), Fail> {
-    let mut text = String::new();
-    for seg in &session.segments {
-        text.push_str(&clock(seg.at, session.utc_offset_min));
-        text.push(' ');
-        text.push_str(&seg.en);
-        text.push('\n');
-    }
-    let date = local_date(
-        session.started_at.unwrap_or_else(now_ms),
-        session.utc_offset_min,
+    let off = session.utc_offset_min;
+    let date = notes::local_date(session.started_at.unwrap_or_else(now_ms), off);
+    let previous = if final_pass { None } else { previous };
+    let from = previous
+        .as_ref()
+        .map(|(_, upto)| (*upto).min(session.segments.len()))
+        .unwrap_or(0);
+    let lines = notes::transcript(
+        session.segments[from..]
+            .iter()
+            .map(|s| (s.id, s.at, s.en.as_str())),
+        off,
     );
-    let prompt = format!(
-        "{}{glossary}",
-        notes_prompt(final_pass, &session.course, &date)
+    let (system, user) = notes::request(
+        glossary,
+        &session.course,
+        &date,
+        previous.as_ref().map(|(n, _)| n),
+        &lines,
+        final_pass,
     );
-    let (out, usage) = chat(key, &prompt, &text, true, 180)?;
-    let notes = serde_json::from_str::<Notes>(&out)
-        .map_err(|_| Fail::Later("笔记没整理出来，稍后再试".into()))?;
+    let (out, usage) = chat(key, &system, &user, true, 240)?;
+    let mut valid: Vec<u64> = session.segments.iter().map(|s| s.id).collect();
+    valid.sort_unstable();
+    let notes = notes::parse(&out, &date, &valid)
+        .ok_or_else(|| Fail::Later("笔记没整理出来，稍后再试".into()))?;
     Ok((notes, usage))
 }
 
@@ -645,17 +573,23 @@ fn spawn_summary(app: AppHandle, generation: u64, final_pass: bool) {
             return;
         }
         inner.summarizing = true;
+        // 上一版笔记和它整理到第几句：听课中只把新增的给模型合并
+        let previous = match (&inner.s.notes, inner.notes_upto) {
+            (Some(n), upto) if upto > 0 => Some((n.clone(), upto)),
+            _ => None,
+        };
         (
             inner.key.clone(),
             inner.glossary.prompt_block(),
             inner.s.clone(),
+            previous,
         )
     };
     publish(&app);
     std::thread::spawn(move || {
-        let (key, glossary, session) = snapshot;
+        let (key, glossary, session, previous) = snapshot;
         let count = session.segments.len();
-        let result = summarize(&key, &glossary, &session, final_pass);
+        let result = summarize(&key, &glossary, &session, previous, final_pass);
         let ok = update(&app, generation, |inner| {
             inner.summarizing = false;
             // 草稿回来时已经下课了：以完整整理的为准，草稿扔掉
@@ -1303,17 +1237,6 @@ pub fn lecture_open_platform() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dates() {
-        assert_eq!(date_of(0), "1970-01-01");
-        assert_eq!(date_of(1_795_000_000_000), "2026-11-18");
-        // 北京时间早上 7 点的课，UTC 还是前一天
-        let seven_am_beijing = 1_795_046_400_000 - 86_400_000 + 23 * 3_600_000;
-        assert_eq!(local_date(seven_am_beijing, 480), "2026-11-19");
-        assert_eq!(clock(seven_am_beijing, 480), "07:00");
-        assert_eq!(clock(seven_am_beijing, 0), "23:00");
-    }
 
     #[test]
     fn ids() {

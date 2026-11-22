@@ -10,12 +10,16 @@ import { SlidesBar } from "../components/SlidesBar";
 import { t, tMsg, useLang } from "../lib/i18n";
 import {
   costText,
+  dueDate,
+  jumpToSegment,
   lecture,
+  onJump,
   listenedNow,
   notesMarkdown,
   useLecture,
   useLectureHistory,
   useLevels,
+  type LectureDue,
   type LectureNotes,
   type LectureState,
 } from "../lib/lecture";
@@ -190,6 +194,28 @@ function Live({ s }: { s: LectureState }) {
     setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
   };
 
+  // 右边点了一条要点：滚到它出自的那一句，闪一下
+  const [flash, setFlash] = useState<number | null>(null);
+  useEffect(
+    () =>
+      onJump((id) => {
+        const el = document.getElementById(`lec-seg-${id}`);
+        const list = listRef.current;
+        if (!el || !list) return;
+        setFollow(false);
+        // 只滚左边这一栏（scrollIntoView 会连整个窗口一起滚）
+        const top = el.offsetTop - list.offsetTop - (list.clientHeight - el.offsetHeight) / 2;
+        list.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        setFlash(id);
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (flash === null) return;
+    const timer = window.setTimeout(() => setFlash(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [flash]);
+
   const listening = s.status === "listening";
   const listened = minutesOf(listenedNow(s, now.getTime()));
 
@@ -248,7 +274,13 @@ function Live({ s }: { s: LectureState }) {
         {s.segments.map((seg, i) => {
           const last = i === s.segments.length - 1 && !s.pending;
           return (
-            <li key={seg.id} className={last && listening ? "lec-seg is-latest" : "lec-seg"}>
+            <li
+              key={seg.id}
+              id={`lec-seg-${seg.id}`}
+              className={["lec-seg", last && listening ? "is-latest" : "", flash === seg.id ? "is-flash" : ""]
+                .filter(Boolean)
+                .join(" ")}
+            >
               <time className="lec-seg__time">{clock(seg.at)}</time>
               <div className="lec-seg__body">
                 <p className="lec-seg__en" lang="en">
@@ -347,7 +379,7 @@ function Notes({ s }: { s: LectureState }) {
       </header>
       <div className="lec-paper">
         {!active ? <History /> : null}
-        {active && s.notes ? <NotesBody notes={s.notes} draft={s.status !== "done"} /> : null}
+        {active && s.notes ? <NotesBody s={s} notes={s.notes} draft={s.status !== "done"} /> : null}
         {active && !s.notes ? (
           <p className="lec-paper__empty">
             {s.status === "finishing"
@@ -365,8 +397,9 @@ function Notes({ s }: { s: LectureState }) {
   );
 }
 
-function NotesBody({ notes, draft }: { notes: LectureNotes; draft: boolean }) {
-  const { words, deadlines } = usePlanner();
+function NotesBody({ s, notes, draft }: { s: LectureState; notes: LectureNotes; draft: boolean }) {
+  const { words, deadlines, courses } = usePlanner();
+  const timeOf = useMemo(() => new Map(s.segments.map((seg) => [seg.id, seg.at])), [s.segments]);
   const known = useMemo(() => new Set(words.map((w) => w.word.toLowerCase())), [words]);
   const dueTitles = useMemo(() => new Set(deadlines.map((d) => d.title)), [deadlines]);
 
@@ -378,9 +411,26 @@ function NotesBody({ notes, draft }: { notes: LectureNotes; draft: boolean }) {
         <section key={part.title} className="lec-doc__part">
           <h3>{part.title}</h3>
           <ul>
-            {part.points.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
+            {part.points.map((p) => {
+              const at = p.refs.length ? timeOf.get(p.refs[0]) : undefined;
+              return (
+                <li key={p.text}>
+                  {at !== undefined ? (
+                    <button
+                      type="button"
+                      className="lec-point"
+                      title={t("在左边看原话")}
+                      onClick={() => jumpToSegment(p.refs[0])}
+                    >
+                      <span>{p.text}</span>
+                      <time className="lec-point__time">{clock(at)}</time>
+                    </button>
+                  ) : (
+                    p.text
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ))}
@@ -425,7 +475,12 @@ function NotesBody({ notes, draft }: { notes: LectureNotes; draft: boolean }) {
           <h3>{t("作业和截止日期")}</h3>
           <ul className="lec-dues">
             {notes.dues.map((due) => (
-              <Due key={due.title} due={due} added={dueTitles.has(due.title)} />
+              <Due
+                key={due.title}
+                due={due}
+                resolved={dueDate(due, s, courses)}
+                added={dueTitles.has(due.title)}
+              />
             ))}
           </ul>
         </section>
@@ -446,9 +501,13 @@ function NotesBody({ notes, draft }: { notes: LectureNotes; draft: boolean }) {
 }
 
 /** 一条作业：老师说了哪天就直接能加；没说哪天先选个日子 */
-function Due({ due, added }: { due: LectureNotes["dues"][number]; added: boolean }) {
-  const [date, setDate] = useState(due.date ?? "");
-  useEffect(() => setDate(due.date ?? ""), [due.date]);
+function Due({ due, resolved, added }: { due: LectureDue; resolved: string | null; added: boolean }) {
+  const [date, setDate] = useState(resolved ?? "");
+  useEffect(() => setDate(resolved ?? ""), [resolved]);
+  // 日期是怎么来的：老师说的"下节课"按课表算；没说具体哪天要自己填
+  let how = "";
+  if (due.when?.kind === "next_class") how = resolved ? t("下节课，按课表算的") : t("下节课，课表上没找到");
+  else if (!resolved) how = t("老师没说具体哪天，自己填一下");
   return (
     <li className="lec-due">
       <div className="lec-due__text">
@@ -456,6 +515,7 @@ function Due({ due, added }: { due: LectureNotes["dues"][number]; added: boolean
         <q className="lec-due__quote" lang="en">
           {due.quote}
         </q>
+        {how ? <span className="lec-due__how">{how}</span> : null}
       </div>
       <div className="lec-due__act">
         <input

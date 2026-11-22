@@ -7,7 +7,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
-import { getPlanner } from "./planner";
+import { getPlanner, type Course } from "./planner";
+import { classesOn } from "./schedule";
 import { getSettings, subscribeSettings } from "./settings";
 import { readSlides } from "./slides";
 import { call, onEvent } from "./tauri";
@@ -22,16 +23,39 @@ export interface Segment {
   zh: string | null;
 }
 
+export interface NotePoint {
+  text: string;
+  refs: number[];
+}
+
+/** 老师怎么说截止时间的：具体日期、周几、下节课、几天后 */
+export interface DueWhen {
+  kind: "date" | "weekday" | "next_class" | "in_days" | "unknown";
+  weekday?: number;
+  nextWeek?: boolean;
+  days?: number;
+}
+
+export interface LectureDue {
+  title: string;
+  /** "2026-12-04"。"下节课"要按课表算，这里是 null */
+  date: string | null;
+  quote: string;
+  when?: DueWhen;
+  /** 出自左边哪一句 */
+  atRef?: number;
+}
+
 /** 整理出来的笔记 */
 export interface LectureNotes {
   /** 这节课讲了什么：两三句话 */
   summary: string;
-  /** 按主题分段的提纲 */
-  outline: { title: string; points: string[] }[];
+  /** 按主题分段的提纲。每条要点记着出自左边哪几句（句子编号） */
+  outline: { title: string; points: NotePoint[] }[];
   /** 关键术语，中英对照 */
   terms: { en: string; zh: string; note?: string }[];
   /** 老师提到的作业、考试、截止日期 */
-  dues: { title: string; /** "2026-12-04"，老师没说具体哪天是 null */ date: string | null; quote: string }[];
+  dues: LectureDue[];
   /** 值得回去复习的地方 */
   review: string[];
 }
@@ -253,7 +277,7 @@ export function notesMarkdown(s: LectureState, withTranscript = false): string {
   if (n.outline.length) {
     for (const part of n.outline) {
       lines.push(`## ${part.title}`, "");
-      for (const p of part.points) lines.push(`- ${p}`);
+      for (const p of part.points) lines.push(`- ${p.text}`);
       lines.push("");
     }
   }
@@ -264,7 +288,10 @@ export function notesMarkdown(s: LectureState, withTranscript = false): string {
   }
   if (n.dues.length) {
     lines.push("## 作业和截止日期", "");
-    for (const due of n.dues) lines.push(`- ${due.title}${due.date ? `（${due.date}）` : ""}`);
+    for (const due of n.dues) {
+      const when = due.date ?? (due.when?.kind === "next_class" ? t("下节课前") : "");
+      lines.push(`- ${due.title}${when ? `（${when}）` : ""}`);
+    }
     lines.push("");
   }
   if (n.review.length) {
@@ -336,3 +363,39 @@ export const slides = {
   remove: (course: string, courseId: string | null, name: string) =>
     invoke<Material>("lecture_remove_slides", { course, courseId, name }),
 };
+
+// ---------- 笔记和左边原文之间跳转 ----------
+
+const JUMP = "lecture-jump";
+
+/** 让左边滚到这一句并闪一下 */
+export function jumpToSegment(id: number): void {
+  window.dispatchEvent(new CustomEvent<number>(JUMP, { detail: id }));
+}
+
+export function onJump(fn: (id: number) => void): () => void {
+  const handler = (e: Event) => fn((e as CustomEvent<number>).detail);
+  window.addEventListener(JUMP, handler);
+  return () => window.removeEventListener(JUMP, handler);
+}
+
+// ---------- "下节课前"按课表算 ----------
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** 截止日期：笔记里算好了就用；"下节课"按课表找这门课的下一次课（四周以内） */
+export function dueDate(due: LectureDue, s: LectureState, courses: Course[]): string | null {
+  if (due.date) return due.date;
+  if (due.when?.kind !== "next_class" || !s.startedAt) return null;
+  const start = new Date(s.startedAt);
+  for (let i = 1; i <= 28; i++) {
+    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const hit = classesOn(courses, day).some((c) =>
+      s.courseId ? c.course.id === s.courseId : c.course.title.trim().toLowerCase() === s.course.trim().toLowerCase(),
+    );
+    if (hit) return ymd(day);
+  }
+  return null;
+}

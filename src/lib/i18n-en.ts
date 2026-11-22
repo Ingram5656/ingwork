@@ -840,4 +840,9 @@ export const EN: Record<string, string> = {
   "课件没存上，请检查数据文件夹能不能写": "Couldn't save the slides. Check that the data folder is writable",
   "课件没整理出来，稍后再试": "Couldn't process the slides. Try again later",
   "这份课件里读不出字，可能是扫描的图片。换一份带文字的试试": "No text found in these slides. They may be scanned images. Try a file with text",
+  "下节课前": "before next class",
+  "在左边看原话": "See what was said",
+  "下节课，按课表算的": "Next class, from your timetable",
+  "下节课，课表上没找到": "Next class, not found in your timetable",
+  "老师没说具体哪天，自己填一下": "No exact date was given. Pick one",
 };
