@@ -16,8 +16,11 @@ mod audio;
 pub mod course;
 mod glossary;
 mod notes;
+// 命令要用完整路径登记，所以是 pub
+pub mod import;
 mod record;
 mod redo;
+mod source;
 mod stitch;
 
 use glossary::Glossary;
@@ -74,6 +77,8 @@ enum Status {
     Paused,
     Finishing,
     Done,
+    /// 正在导入录音或视频
+    Importing,
 }
 
 /// 一节课：存成文件的就是这一份
@@ -95,6 +100,8 @@ pub struct Session {
     usage: Usage,
     /// 存了录音的话：每次开始、继续的时刻对应录音里第几个样本（录音文件只在录的那台电脑上）
     audio_marks: Vec<record::Mark>,
+    /// 从录音或视频导入的：文件名。时刻显示成"第几分几秒"
+    imported: Option<String>,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
@@ -140,6 +147,8 @@ struct View<'a> {
     audio_here: bool,
     /// 正在用录音重新整理：进度 0～100
     redo: Option<u8>,
+    /// 正在导入：进度 0～100
+    progress: Option<u8>,
 }
 
 #[derive(Clone, Serialize)]
@@ -191,6 +200,7 @@ struct Inner {
     words: Vec<String>,
     audio_here: bool,
     redo: Option<u8>,
+    progress: Option<u8>,
     stop: Option<Arc<AtomicBool>>,
     paused: Arc<AtomicBool>,
 }
@@ -215,6 +225,7 @@ impl Default for Inner {
             words: Vec::new(),
             audio_here: false,
             redo: None,
+            progress: None,
             stop: None,
             paused: Arc::new(AtomicBool::new(false)),
         }
@@ -237,6 +248,7 @@ fn view(inner: &Inner) -> serde_json::Value {
         quiet: inner.quiet && inner.status == Status::Listening,
         audio_here: inner.audio_here,
         redo: inner.redo,
+        progress: inner.progress,
     })
     .unwrap_or(serde_json::Value::Null)
 }
@@ -312,7 +324,7 @@ fn audio_path(app: &AppHandle, id: &str) -> PathBuf {
 fn busy(inner: &Inner) -> bool {
     matches!(
         inner.status,
-        Status::Listening | Status::Paused | Status::Finishing
+        Status::Listening | Status::Paused | Status::Finishing | Status::Importing
     ) || inner.redo.is_some()
 }
 
@@ -325,12 +337,13 @@ fn spawn_recorder(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     denoise: bool,
+    source: source::Source,
     audio_file: Option<PathBuf>,
     jobs: Sender<Job>,
 ) -> Result<(), String> {
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     std::thread::spawn(move || {
-        let (stream, samples, rate) = match audio::open_mic() {
+        let (stream, samples, rate) = match source::open(source) {
             Ok(v) => {
                 let _ = ready_tx.send(Ok(()));
                 v
@@ -340,7 +353,9 @@ fn spawn_recorder(
                 return;
             }
         };
-        crate::logger::info(&format!("lecture microphone: {rate} Hz, denoise {denoise}"));
+        crate::logger::info(&format!(
+            "lecture input: {source:?}, {rate} Hz, denoise {denoise}"
+        ));
         let mut pipeline = audio::Pipeline::new(rate, denoise);
         // 要存录音的话边录边写；暂停后继续时记一个标记（时刻 → 录音里第几个样本）
         let mut writer = audio_file.and_then(|path| match record::Writer::create(&path) {
@@ -610,11 +625,14 @@ fn summarize(
         .as_ref()
         .map(|(_, upto)| (*upto).min(session.segments.len()))
         .unwrap_or(0);
+    // 导入的录音按"第几分几秒"标时刻
+    let base = session.imported.as_ref().and(session.started_at);
     let lines = notes::transcript(
         session.segments[from..]
             .iter()
             .map(|s| (s.id, s.at, s.en.as_str())),
         off,
+        base,
     );
     let (system, user) = notes::request(
         glossary,
@@ -955,6 +973,7 @@ pub fn lecture_start(
     denoise: Option<bool>,
     words: Option<Vec<String>>,
     save_audio: Option<bool>,
+    source: Option<String>,
 ) -> Result<(), String> {
     let key = key.trim().to_string();
     if key.is_empty() {
@@ -1014,6 +1033,7 @@ pub fn lecture_start(
         stop,
         paused,
         denoise.unwrap_or(false),
+        source::Source::parse(source.as_deref()),
         audio_file,
         tx,
     ) {
@@ -1073,6 +1093,15 @@ pub fn lecture_resume(app: AppHandle, lecture: State<Lecture>) {
 pub fn lecture_stop(app: AppHandle, lecture: State<Lecture>) {
     {
         let mut inner = lock(&lecture.0);
+        if inner.status == Status::Importing {
+            // 导入停下：已经读到的照样翻译、整理
+            if let Some(stop) = inner.stop.take() {
+                stop.store(true, Ordering::SeqCst);
+            }
+            drop(inner);
+            publish(&app);
+            return;
+        }
         if !matches!(inner.status, Status::Listening | Status::Paused) {
             return;
         }

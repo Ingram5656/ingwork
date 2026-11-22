@@ -209,11 +209,30 @@ dues 只放老师明确说了的作业、考试、截止时间，没有就是空
 说了具体日期用 date 并填 date；说\u{201c}周五\u{201d}\u{201c}下周五\u{201d}用 weekday，weekday 填 1 到 7（1 是周一），说 next 或 the following 时 next_week 为 true；\
 说\u{201c}下节课\u{201d}\u{201c}下次上课前\u{201d}用 next_class；说\u{201c}两周内\u{201d}\u{201c}10 天后\u{201d}用 in_days 并填 days；说不清用 unknown。用不上的字段可以省略。";
 
-/// 听写稿：每句一行 "[编号] 时:分 内容"
-pub fn transcript<'a>(lines: impl Iterator<Item = (u64, u64, &'a str)>, offset_min: i32) -> String {
+/// 从开始过了多久："12:05"、"1:02:03"
+pub fn elapsed(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (h, m, s) = (secs / 3600, (secs / 60) % 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
+/// 听写稿：每句一行 "[编号] 时:分 内容"。base 有值（导入的录音）就写从头过了多久
+pub fn transcript<'a>(
+    lines: impl Iterator<Item = (u64, u64, &'a str)>,
+    offset_min: i32,
+    base: Option<u64>,
+) -> String {
     let mut out = String::new();
     for (id, at, en) in lines {
-        out.push_str(&format!("[{id}] {} {}\n", clock(at, offset_min), en.trim()));
+        let when = match base {
+            Some(b) => elapsed(at.saturating_sub(b)),
+            None => clock(at, offset_min),
+        };
+        out.push_str(&format!("[{id}] {when} {}\n", en.trim()));
     }
     out
 }

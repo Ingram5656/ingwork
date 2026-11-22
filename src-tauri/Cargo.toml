@@ -27,8 +27,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "blocking"] }
 rodio = "0.19"
-# 听课录音（rodio 自己也用它放声音，版本保持一致）
-cpal = "0.15"
+# 听课录音：麦克风、电脑播放的声音（0.17 起 Mac 也能录电脑的声音）。
+# 放环境音的 rodio 还在用旧版，两个版本并存
+cpal17 = { package = "cpal", version = "0.17" }
+# 听课：导入录音或视频（mp3、m4a、mp4、wav……），边读边解码，不占多少内存
+symphonia = { version = "0.5", features = ["aac", "isomp4", "mp3", "alac", "aiff", "caf"] }
 # 听课：判断有没有人说话（纯 Rust 的小神经网络，约 100 KB）
 earshot = "1.2"
 # 听课：降噪（RNNoise 的 Rust 版）。默认功能会带上命令行工具，不要

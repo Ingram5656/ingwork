@@ -145,6 +145,8 @@ export interface Settings {
   lectureDenoise: boolean;
   /** 听课时把录音存在这台电脑上（能回放、课后能用录音重新整理） */
   lectureSaveAudio: boolean;
+  /** 听课录哪里的声音：麦克风，或者电脑正在放的声音（网课、回放） */
+  lectureSource: "mic" | "system";
   /** 睡眠模式：雨量 0–100，0 是晴天 */
   sleepRain: number;
   /** 雨往哪边斜（度），-40 到 40 */
@@ -239,6 +241,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lectureAsk: true,
   lectureDenoise: false,
   lectureSaveAudio: false,
+  lectureSource: "mic",
   sleepRain: 45,
   sleepAngle: -8,
   sleepThunder: false,

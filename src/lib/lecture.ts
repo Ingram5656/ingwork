@@ -60,7 +60,7 @@ export interface LectureNotes {
   review: string[];
 }
 
-export type LectureStatus = "idle" | "listening" | "paused" | "finishing" | "done";
+export type LectureStatus = "idle" | "listening" | "paused" | "finishing" | "done" | "importing";
 
 export interface LectureUsage {
   asrMs: number;
@@ -114,6 +114,10 @@ export interface LectureState {
   audioHere: boolean;
   /** 正在用录音重新整理：进度 0～100 */
   redo: number | null;
+  /** 正在导入录音或视频：进度 0～100 */
+  progress: number | null;
+  /** 从录音或视频导入的：文件名。时刻显示成"第几分几秒" */
+  imported: string | null;
   /** 用了多少：听写时长（毫秒）、命中缓存 / 没命中的输入字数、输出字数 */
   usage: LectureUsage;
   /** 下一次整理大约在什么时候（听课中才有） */
@@ -151,6 +155,8 @@ const EMPTY: LectureState = {
   quiet: false,
   audioHere: false,
   redo: null,
+  progress: null,
+  imported: null,
   nextNotesAt: null,
   summarizing: false,
   error: null,
@@ -242,6 +248,7 @@ export const lecture = {
       // 生词本里的词也算进这门课的术语表（拼写以它为准）
       words: getPlanner().words.map((w) => w.word),
       saveAudio: getSettings().lectureSaveAudio,
+      source: getSettings().lectureSource,
     }).then(
       () => null,
       (e) => String(e),
@@ -254,6 +261,19 @@ export const lecture = {
   close: () => call("lecture_close"),
   /** 重新整理一遍（整理失败、或者想再来一次） */
   summarize: () => call("lecture_summarize", { key: getSettings().lectureKey }),
+  /** 导入录音或视频：弹出选文件的窗口。返回 null 是开始了或者取消了，否则是中文说明 */
+  importFile: (course: string, courseId: string | null = null) =>
+    invoke<boolean>("lecture_import", {
+      course,
+      courseId,
+      key: getSettings().lectureKey,
+      utcOffsetMin: -new Date().getTimezoneOffset(),
+      words: getPlanner().words.map((w) => w.word),
+      saveAudio: getSettings().lectureSaveAudio,
+    }).then(
+      () => null,
+      (e) => String(e),
+    ),
   /** 下课后用录音重新整理一遍。不行的话返回中文说明 */
   redo: () =>
     invoke("lecture_redo", { key: getSettings().lectureKey }).then(
@@ -463,4 +483,14 @@ export async function playSegment(s: LectureState, index: number): Promise<void>
   player.onended = stopClip;
   setPlaying(seg.id);
   await player.play();
+}
+
+/** 从开始过了多久："12:05"、"1:02:03" */
+export function elapsed(ms: number): string {
+  const secs = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor(secs / 60) % 60;
+  const sec = secs % 60;
+  const two = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${two(m)}:${two(sec)}` : `${two(m)}:${two(sec)}`;
 }

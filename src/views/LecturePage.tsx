@@ -11,6 +11,7 @@ import { t, tMsg, useLang } from "../lib/i18n";
 import {
   costText,
   dueDate,
+  elapsed,
   jumpToSegment,
   lecture,
   onJump,
@@ -41,6 +42,11 @@ function clock(ms: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+/** 一句话的时刻：导入的录音写"第几分几秒"，听课写几点几分 */
+function timeLabel(s: LectureState, at: number): string {
+  return s.imported && s.startedAt ? elapsed(at - s.startedAt) : clock(at);
+}
+
 function minutesOf(ms: number): number {
   return Math.max(0, Math.floor(ms / 60_000));
 }
@@ -64,9 +70,10 @@ export function LecturePage({ openSettings }: Props) {
 // ---------- 左边：开始之前 ----------
 
 function Starter({ openSettings }: Props) {
-  const [settings] = useSettings();
+  const [settings, update] = useSettings();
   const { courses } = usePlanner();
   const now = useNow();
+  const system = settings.lectureSource === "system";
   const minute = minuteOfDay(now);
   const today = classesOn(courses, now).filter((c) => c.end > minute - 10);
   const current = today.find((c) => c.start - 10 <= minute && minute < c.end) ?? null;
@@ -141,17 +148,51 @@ function Starter({ openSettings }: Props) {
 
       {hasKey ? (
         <div className="lec-start__go">
+          <div className="lec-source" role="radiogroup" aria-label={t("听哪里的声音")}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!system}
+              className={!system ? "lec-source__opt is-on" : "lec-source__opt"}
+              onClick={() => update({ lectureSource: "mic" })}
+            >
+              {t("麦克风")}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={system}
+              className={system ? "lec-source__opt is-on" : "lec-source__opt"}
+              onClick={() => update({ lectureSource: "system" })}
+            >
+              {t("电脑的声音")}
+            </button>
+          </div>
           <button
             type="button"
             className="btn btn--primary lec-start__btn"
             disabled={!name || starting}
             onClick={() => void begin()}
           >
-            {starting ? t("正在打开麦克风") : t("开始听课")}
+            {starting ? (system ? t("正在打开") : t("正在打开麦克风")) : t("开始听课")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost lec-start__import"
+            disabled={!name || starting}
+            onClick={() => {
+              setError("");
+              void lecture.importFile(name, chosen ? chosen.course.id : null).then((e) => e && setError(tMsg(e)));
+            }}
+          >
+            {t("导入录音或视频")}
           </button>
           {error ? <p className="row__error">{error}</p> : null}
           <p className="lec-start__note">
-            {t("用麦克风听，英文一段一段听写下来、翻成中文。录音不留，只留文字。")}
+            {system
+              ? t("录电脑正在放的声音（网课、课程回放），英文一段一段听写下来、翻成中文。")
+              : t("用麦克风听，英文一段一段听写下来、翻成中文。")}
+            {settings.lectureSaveAudio ? t("录音存在这台电脑上。") : t("录音不留，只留文字。")}
           </p>
         </div>
       ) : (
@@ -225,13 +266,17 @@ function Live({ s }: { s: LectureState }) {
   }, [flash]);
 
   const listening = s.status === "listening";
+  const importing = s.status === "importing";
   const listened = minutesOf(listenedNow(s, now.getTime()));
+  const when = (at: number) => timeLabel(s, at);
 
   let sub = "";
   if (s.startedAt) sub = t("{time} 开始，听了 {n} 分钟", { time: clock(s.startedAt), n: listened });
   if (s.status === "paused") sub = t("暂停了，听了 {n} 分钟", { n: listened });
   if (s.status === "finishing") sub = t("录音停了，正在整理整节课");
   if (s.status === "done") sub = t("这节课听了 {n} 分钟", { n: listened });
+  if (importing) sub = t("正在导入 {name}：{n}%", { name: s.imported ?? "", n: s.progress ?? 0 });
+  if (s.status === "finishing" && s.imported) sub = t("读完了，正在整理整节课");
   const cost = costText(s.usage);
   if (cost && s.status !== "finishing") sub += t("，大概花了 {cost}", { cost });
 
@@ -260,6 +305,16 @@ function Live({ s }: { s: LectureState }) {
               {t("下课，整理笔记")}
             </button>
           ) : null}
+          {importing ? (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              title={t("已经读到的照样翻译、整理成笔记")}
+              onClick={lecture.stop}
+            >
+              {t("停下")}
+            </button>
+          ) : null}
           {s.status === "done" ? (
             <button type="button" className="btn btn--ghost" onClick={lecture.close}>
               {t("听下一节")}
@@ -274,10 +329,21 @@ function Live({ s }: { s: LectureState }) {
           <LevelBand quiet={!listening} />
         </>
       ) : null}
+      {importing ? (
+        <>
+          <SlidesBar course={s.course} courseId={s.courseId} />
+          <div className="lec-progress" role="progressbar" aria-valuenow={s.progress ?? 0} aria-valuemin={0} aria-valuemax={100}>
+            <span style={{ width: `${s.progress ?? 0}%` }} />
+          </div>
+        </>
+      ) : null}
 
       <ol className="lec-stream" ref={listRef} onScroll={onScroll} aria-live="polite">
         {s.segments.length === 0 && !s.pending ? (
-          <li className="lec-stream__empty">{listening ? t("在听了。老师开口以后，几秒钟内第一段就会出来。") : null}</li>
+          <li className="lec-stream__empty">
+            {listening ? t("在听了。老师开口以后，几秒钟内第一段就会出来。") : null}
+            {importing ? t("正在读，读到有人说话的地方，半分钟左右第一段就会出来。") : null}
+          </li>
         ) : null}
         {s.segments.map((seg, i) => {
           const last = i === s.segments.length - 1 && !s.pending;
@@ -299,13 +365,13 @@ function Live({ s }: { s: LectureState }) {
                     playSegment(s, i).catch((e: unknown) => setPlayError(tMsg(String(e))));
                   }}
                 >
-                  <span className="lec-play__time">{clock(seg.at)}</span>
+                  <span className="lec-play__time">{when(seg.at)}</span>
                   <span className="lec-play__icon" aria-hidden="true">
                     {playing === seg.id ? "■" : "▶"}
                   </span>
                 </button>
               ) : (
-                <time className="lec-seg__time">{clock(seg.at)}</time>
+                <time className="lec-seg__time">{when(seg.at)}</time>
               )}
               <div className="lec-seg__body">
                 <p className="lec-seg__en" lang="en">
@@ -324,7 +390,7 @@ function Live({ s }: { s: LectureState }) {
         })}
         {s.pending ? (
           <li className={listening ? "lec-seg is-latest" : "lec-seg"}>
-            <time className="lec-seg__time">{clock(s.pending.at)}</time>
+            <time className="lec-seg__time">{when(s.pending.at)}</time>
             <div className="lec-seg__body">
               <p className="lec-seg__en" lang="en">
                 {s.pending.en}
@@ -350,6 +416,7 @@ function Live({ s }: { s: LectureState }) {
       ) : null}
 
       <footer className="lec-foot">
+        {importing ? <span className="lec-foot__live">{t("正在导入")}</span> : null}
         {listening ? (
           <span className="lec-foot__live">
             <span className="lec-dot" aria-hidden="true" />
@@ -427,7 +494,9 @@ function Notes({ s }: { s: LectureState }) {
         {active && s.notes ? <NotesBody s={s} notes={s.notes} draft={s.status !== "done"} /> : null}
         {active && !s.notes ? (
           <p className="lec-paper__empty">
-            {s.status === "finishing"
+            {s.status === "importing"
+              ? t("读完以后整理整节课的笔记。")
+              : s.status === "finishing"
               ? t("正在整理，整节课大概要半分钟。")
               : t("听到 5 分钟左右，这里会出现第一版提纲；下课点“下课，整理笔记”再完整整理一遍。")}
           </p>
@@ -468,7 +537,7 @@ function NotesBody({ s, notes, draft }: { s: LectureState; notes: LectureNotes; 
                       onClick={() => jumpToSegment(p.refs[0])}
                     >
                       <span>{p.text}</span>
-                      <time className="lec-point__time">{clock(at)}</time>
+                      <time className="lec-point__time">{timeLabel(s, at)}</time>
                     </button>
                   ) : (
                     p.text

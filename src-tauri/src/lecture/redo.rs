@@ -44,8 +44,33 @@ fn translate_batch(
     Ok((zh, usage))
 }
 
+/// 翻一批句子：先成批翻，不行就一句一句翻，再不行留空
+pub(super) fn translate_all(
+    key: &str,
+    glossary: &str,
+    context: &[String],
+    items: &[(u64, String)],
+    usage: &mut Usage,
+) -> Vec<String> {
+    let texts: Vec<String> = items.iter().map(|(_, en)| en.clone()).collect();
+    if let Ok((got, u)) = translate_batch(key, glossary, context, &texts) {
+        usage.add(u);
+        return got;
+    }
+    texts
+        .iter()
+        .map(|en| match translate(key, glossary, &[], en) {
+            Ok((one, u)) => {
+                usage.add(u);
+                one
+            }
+            Err(_) => String::new(),
+        })
+        .collect()
+}
+
 /// 听写一段，断网、DeepSeek 忙就多试几次
-fn hear(key: &str, chunk: &audio::Chunk) -> Result<Option<(String, u64)>, String> {
+pub(super) fn hear(key: &str, chunk: &audio::Chunk) -> Result<Option<(String, u64)>, String> {
     let wav = audio::wav(&chunk.samples);
     let mut wait = 2;
     for _ in 0..6 {
@@ -65,7 +90,7 @@ fn hear(key: &str, chunk: &audio::Chunk) -> Result<Option<(String, u64)>, String
 }
 
 /// 把整句拆开，按在这一段里的位置估一个开始时刻
-fn place(at: u64, until: u64, text: &str, out: &mut Vec<(u64, String)>) {
+pub(super) fn place(at: u64, until: u64, text: &str, out: &mut Vec<(u64, String)>) {
     let parts = stitch::split(text);
     let words: usize = parts
         .iter()
@@ -159,7 +184,6 @@ fn run(app: &AppHandle, generation: u64) -> Result<(), String> {
     // 2. 成批翻译（80～95%）
     let mut zh: Vec<String> = Vec::with_capacity(sentences.len());
     for (n, batch) in sentences.chunks(BATCH).enumerate() {
-        let items: Vec<String> = batch.iter().map(|(_, en)| en.clone()).collect();
         let context: Vec<String> = sentences[..n * BATCH]
             .iter()
             .rev()
@@ -167,24 +191,7 @@ fn run(app: &AppHandle, generation: u64) -> Result<(), String> {
             .rev()
             .map(|(_, en)| en.clone())
             .collect();
-        match translate_batch(&key, &block, &context, &items) {
-            Ok((got, u)) => {
-                usage.add(u);
-                zh.extend(got);
-            }
-            Err(_) => {
-                // 成批的不行就一句一句翻
-                for en in &items {
-                    match translate(&key, &block, &[], en) {
-                        Ok((one, u)) => {
-                            usage.add(u);
-                            zh.push(one);
-                        }
-                        Err(_) => zh.push(String::new()),
-                    }
-                }
-            }
-        }
+        zh.extend(translate_all(&key, &block, &context, batch, &mut usage));
         progress(
             app,
             generation,

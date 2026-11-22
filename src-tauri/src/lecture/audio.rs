@@ -3,10 +3,9 @@
 //! - 重采样：窗函数 sinc 插值，麦克风是 44.1 kHz 还是 48 kHz 都能准确换算，高频不会折叠回来变成杂音
 //! - 降噪：nnnoiseless（RNNoise 的 Rust 版），只认 48 kHz，所以先换到 48 kHz 降噪、再换到 16 kHz
 //! - 有没有人说话：earshot，每 16 毫秒打一个 0～1 的分；比只看声音大小准，风扇、关门不会当成说话
+//! 声音从哪来（麦克风、电脑播放的声音）在 source.rs。
 //! - 切段：攒到 4 秒以上又停顿了 0.5 秒就切；一直不停，到 15 秒在最近 3 秒里最像停顿的地方切，
 //!   这种硬切的段，下一段开头带上前一段最后 1 秒，免得切在词中间（拼接时按词去掉重复）
-
-use std::sync::mpsc::{self, Receiver};
 
 /// 送去听写的采样率
 pub const RATE: u32 = 16_000;
@@ -430,73 +429,6 @@ pub fn wav(samples: &[f32]) -> Vec<u8> {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out
-}
-
-// ---------- 麦克风 ----------
-
-/// 打开默认麦克风：返回流（得一直拿着，丢了就停）、单声道样本从哪儿来、采样率
-pub fn open_mic() -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), String> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "没找到麦克风，请检查有没有插好、系统设置里有没有关掉".to_string())?;
-    let config = device
-        .default_input_config()
-        .map_err(|_| "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风".to_string())?;
-    let channels = config.channels().max(1) as usize;
-    let rate = config.sample_rate().0;
-    let (tx, rx) = mpsc::channel::<Vec<f32>>();
-    let err = |e: cpal::StreamError| crate::logger::error(&format!("microphone: {e}"));
-
-    fn mono<T: Copy>(data: &[T], channels: usize, conv: impl Fn(T) -> f32) -> Vec<f32> {
-        data.chunks(channels)
-            .map(|frame| frame.iter().map(|&v| conv(v)).sum::<f32>() / frame.len() as f32)
-            .collect()
-    }
-
-    let stream_config: cpal::StreamConfig = config.clone().into();
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(mono(data, channels, |v| v));
-                },
-                err,
-                None,
-            )
-        }
-        cpal::SampleFormat::I16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(mono(data, channels, |v| v as f32 / 32768.0));
-                },
-                err,
-                None,
-            )
-        }
-        cpal::SampleFormat::U16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(mono(data, channels, |v| (v as f32 - 32768.0) / 32768.0));
-                },
-                err,
-                None,
-            )
-        }
-        _ => return Err("这个麦克风的格式不认识，换一个麦克风试试".into()),
-    }
-    .map_err(|_| "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风".to_string())?;
-    stream
-        .play()
-        .map_err(|_| "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风".to_string())?;
-    Ok((stream, rx, rate))
 }
 
 /// 麦克风之后的整条处理：任意采样率 →（48 kHz 降噪）→ 16 kHz

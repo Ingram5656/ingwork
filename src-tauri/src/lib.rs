@@ -846,6 +846,7 @@ pub fn run() {
             lecture::lecture_open_platform,
             lecture::lecture_redo,
             lecture::lecture_clip,
+            lecture::import::lecture_import,
             lecture::course::lecture_material,
             lecture::course::lecture_add_slides,
             lecture::course::lecture_remove_slides,
