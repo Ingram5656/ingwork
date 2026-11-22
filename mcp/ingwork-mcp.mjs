@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 
 // ---------- 数据文件 ----------
 
