@@ -1,7 +1,7 @@
 //! 听课的声音从哪来：麦克风，或者电脑正在播放的声音（网课、Teams、课程回放）。
 //!
 //! 用 cpal 0.17：在"输出设备"上开输入流就是录它正在放的声音——Windows 用 WASAPI 的回环录音，
-//! Mac 用系统的音频录制（macOS 14.6 以上，第一次会问要不要允许）。
+//! Mac 用系统的"进程声音监听"（macOS 14.2 以上，第一次会问要不要允许），见 systap.rs。
 //! 软件里放环境音用的 rodio 还在用旧版 cpal，两个版本并存，互不影响。
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -23,9 +23,36 @@ impl Source {
     }
 }
 
-/// 打开声音来源：返回流（得一直拿着，丢了就停）、单声道样本从哪儿来、采样率
-pub fn open(source: Source) -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), String> {
+/// 开着的声音来源：得一直拿着，丢了就停。先停流，再拆 Mac 上的监听
+pub struct Input {
+    _stream: cpal::Stream,
+    #[cfg(target_os = "macos")]
+    _tap: Option<super::systap::SystemTap>,
+}
+
+/// Mac：建好监听后，在 cpal 的输入设备里按 UID 找到那个聚合设备
+#[cfg(target_os = "macos")]
+fn tap_device(host: &cpal::Host, fail: &str) -> Result<cpal::Device, String> {
+    // 刚建好的聚合设备偶尔要等一下才列得出来
+    for _ in 0..10 {
+        if let Ok(mut devices) = host.input_devices() {
+            if let Some(d) =
+                devices.find(|d| d.id().map(|id| id.1 == super::systap::UID).unwrap_or(false))
+            {
+                return Ok(d);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    crate::logger::error("lecture system audio: aggregate device not listed");
+    Err(fail.to_string())
+}
+
+/// 打开声音来源：返回来源（得一直拿着）、单声道样本从哪儿来、采样率
+pub fn open(source: Source) -> Result<(Input, Receiver<Vec<f32>>, u32), String> {
     let host = cpal::default_host();
+    #[cfg(target_os = "macos")]
+    let mut tap = None;
     let (device, config, fail) = match source {
         Source::Mic => {
             let fail = "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风";
@@ -37,18 +64,28 @@ pub fn open(source: Source) -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), S
                 .map_err(|_| fail.to_string())?;
             (device, config, fail)
         }
+        #[cfg(target_os = "macos")]
         Source::System => {
-            let fail = if cfg!(target_os = "macos") {
-                "没能录到电脑的声音。Mac 需要 macOS 14.6 以上，并在系统设置的\u{201c}隐私与安全性\u{201d}里允许 ingwork 录制音频"
-            } else {
-                "没能录到电脑的声音，请检查有没有在放声音的设备"
-            };
+            // 不交给 cpal 自己判断：戴着 AirPods、耳机（带麦克风）时它会去开耳机的麦克风
+            let fail = MAC_FAIL;
+            tap = Some(super::systap::SystemTap::create()?);
+            let device = tap_device(&host, fail)?;
+            let config = device.default_input_config().map_err(|e| {
+                crate::logger::error(&format!("lecture system audio config: {e}"));
+                fail.to_string()
+            })?;
+            (device, config, fail)
+        }
+        #[cfg(not(target_os = "macos"))]
+        Source::System => {
+            let fail = "没能录到电脑的声音，请检查有没有在放声音的设备";
             let device = host
                 .default_output_device()
                 .ok_or_else(|| "没找到正在放声音的设备".to_string())?;
-            let config = device
-                .default_output_config()
-                .map_err(|_| fail.to_string())?;
+            let config = device.default_output_config().map_err(|e| {
+                crate::logger::error(&format!("lecture system audio config: {e}"));
+                fail.to_string()
+            })?;
             (device, config, fail)
         }
     };
@@ -115,6 +152,22 @@ pub fn open(source: Source) -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), S
         crate::logger::error(&format!("lecture audio input build: {e}"));
         fail.to_string()
     })?;
-    stream.play().map_err(|_| fail.to_string())?;
-    Ok((stream, rx, rate))
+    stream.play().map_err(|e| {
+        crate::logger::error(&format!("lecture audio play: {e}"));
+        fail.to_string()
+    })?;
+    let input = Input {
+        _stream: stream,
+        #[cfg(target_os = "macos")]
+        _tap: tap,
+    };
+    Ok((input, rx, rate))
 }
+
+/// Mac 上录不到电脑声音时的提示
+#[allow(dead_code)]
+pub const MAC_FAIL: &str = "没能录到电脑的声音。Mac 需要 macOS 14.2 以上，并在系统设置的\u{201c}隐私与安全性 → 录屏与系统录音\u{201d}里允许 ingwork 录制系统音频";
+
+/// Mac 上没给权限时不报错、录到的全是 0：录了这么久还全是 0 就提示
+#[allow(dead_code)]
+pub const MAC_SILENT: &str = "录到的电脑声音一直是静音。请在系统设置的\u{201c}隐私与安全性 → 录屏与系统录音 → 仅系统录音\u{201d}里打开 ingwork，然后重新开始；如果电脑本来就没在放声音，可以不管";

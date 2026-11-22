@@ -21,6 +21,8 @@ pub mod import;
 mod record;
 mod redo;
 mod source;
+#[cfg(target_os = "macos")]
+mod systap;
 mod stitch;
 
 use glossary::Glossary;
@@ -373,6 +375,11 @@ fn spawn_recorder(
         let mut out = Vec::new();
         let mut was_paused = false;
         let mut quiet_at = Instant::now();
+        // Mac 上没给"录制系统音频"的权限时不报错，录到的全是 0：过一会儿还全是 0 就提示
+        let watch_silence = cfg!(target_os = "macos") && source == source::Source::System;
+        let mut heard = false;
+        let mut silent_warned = false;
+        let opened_at = Instant::now();
         let mut send_chunk = |chunk: audio::Chunk| {
             if update(&app, generation, |inner| inner.queued += 1) {
                 let _ = jobs.send(Job::Chunk(chunk));
@@ -396,6 +403,27 @@ fn spawn_recorder(
             was_paused = is_paused;
             match samples.recv_timeout(Duration::from_millis(100)) {
                 Ok(block) => {
+                    if watch_silence && !heard {
+                        if block.iter().any(|v| *v != 0.0) {
+                            heard = true;
+                            if silent_warned {
+                                update(&app, generation, |inner| {
+                                    if inner.error.as_deref() == Some(source::MAC_SILENT) {
+                                        inner.error = None;
+                                    }
+                                });
+                            }
+                        } else if !silent_warned
+                            && !is_paused
+                            && opened_at.elapsed() >= Duration::from_secs(10)
+                        {
+                            silent_warned = true;
+                            crate::logger::error("lecture system audio: only silence so far");
+                            update(&app, generation, |inner| {
+                                inner.error = Some(source::MAC_SILENT.into())
+                            });
+                        }
+                    }
                     if is_paused {
                         // 暂停时音量带放平，0.1 秒发一次就够了
                         if quiet_at.elapsed() >= Duration::from_millis(100) {
