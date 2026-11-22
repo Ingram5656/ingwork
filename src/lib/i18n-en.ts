@@ -818,4 +818,8 @@ export const EN: Record<string, string> = {
   "连不上 DeepSeek，请检查网络": "Can't reach DeepSeek. Check your network",
   "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风": "Couldn't open the microphone. Check that ingwork is allowed to use it in system settings",
   "麦克风没有反应，请检查有没有被别的软件占着": "The microphone isn't responding. Check whether another app is using it",
+  "不到 $0.01": "under $0.01",
+  "，大概花了 {cost}": ", about {cost}",
+  "DeepSeek 不认这个请求了，可能是接口有变化，请看看 ingwork 有没有新版本": "DeepSeek no longer accepts this request. The API may have changed, so check for an ingwork update",
+  "DeepSeek 不接受这次请求，跳过了": "DeepSeek rejected this request, so it was skipped",
 };

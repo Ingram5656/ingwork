@@ -4,7 +4,7 @@
 //! 三条线：
 //! - 录音线程：开麦克风，转成 16 kHz 单声道，按停顿切成十秒左右的一段（最长 15 秒），
 //!   每 0.1 秒把音量发给界面（音量带）。切好的段交给处理线程。
-//! - 处理线程：按顺序一段一段送去听写（DeepSeek 的语音识别），再翻译（deepseek-chat）。
+//! - 处理线程：按顺序一段一段送去听写（DeepSeek 的语音识别），再翻译（deepseek-flash）。
 //!   送不出去（断网、DeepSeek 忙）就停在这一段上隔一会儿再试，后面的排着队，顺序不会乱。
 //! - 整理：每 5 分钟另开一个线程整理一版提纲；下课时处理完最后一段，再完整整理一遍。
 //!
@@ -24,7 +24,7 @@ const ASR_URL: &str = "https://api.deepseek.com/v1/tools/asr";
 const CHAT_URL: &str = "https://api.deepseek.com/chat/completions";
 const BALANCE_URL: &str = "https://api.deepseek.com/user/balance";
 const PLATFORM_URL: &str = "https://platform.deepseek.com/";
-const MODEL: &str = "deepseek-chat";
+const MODEL: &str = "deepseek-flash";
 
 /// 送去听写的采样率
 const RATE: u32 = 16_000;
@@ -115,6 +115,32 @@ pub struct Session {
     segments: Vec<Segment>,
     notes: Option<Notes>,
     notes_at: Option<u64>,
+    /// 上课那台电脑的时区（比 UTC 快多少分钟），给模型看日期、时刻用
+    utc_offset_min: i32,
+    /// 用了多少：听写时长、字数，用来估算花费
+    usage: Usage,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Usage {
+    /// 送去听写的声音有多长（毫秒）
+    asr_ms: u64,
+    /// 输入里命中缓存的字数（token）
+    hit: u64,
+    /// 输入里没命中缓存的
+    miss: u64,
+    /// 输出
+    out: u64,
+}
+
+impl Usage {
+    fn add(&mut self, other: Usage) {
+        self.asr_ms += other.asr_ms;
+        self.hit += other.hit;
+        self.miss += other.miss;
+        self.out += other.out;
+    }
 }
 
 /// 发给界面的整份状态
@@ -564,12 +590,17 @@ fn status_fail(code: u16) -> Fail {
     match code {
         401 => Fail::Later("DeepSeek 密钥不对，请到设置的\u{201c}听课\u{201d}里检查一下".into()),
         402 => Fail::Later("DeepSeek 账户余额不够了，充值以后会接着听写".into()),
+        // 地址或模型名不认了：一直重试也没用，直接说
+        404 | 410 | 422 => Fail::Skip(
+            "DeepSeek 不认这个请求了，可能是接口有变化，请看看 ingwork 有没有新版本".into(),
+        ),
         400 | 413 => Fail::Skip("有一段声音没听写出来，跳过了".into()),
         _ => Fail::Later("DeepSeek 暂时连不上，录下来的先攒着，连上了会自动补上".into()),
     }
 }
 
-fn transcribe(key: &str, wav: &[u8]) -> Result<String, Fail> {
+/// 听写一段：返回文字和这段声音的时长（毫秒）
+fn transcribe(key: &str, wav: &[u8]) -> Result<(String, u64), Fail> {
     let part = reqwest::blocking::multipart::Part::bytes(wav.to_vec())
         .file_name("speech.wav")
         .mime_str("audio/wav")
@@ -587,14 +618,59 @@ fn transcribe(key: &str, wav: &[u8]) -> Result<String, Fail> {
     let v: serde_json::Value = resp
         .json()
         .map_err(|_| Fail::Skip("有一段声音没听写出来，跳过了".into()))?;
-    Ok(v.get("text")
+    let text = v
+        .get("text")
         .and_then(|t| t.as_str())
         .unwrap_or("")
         .trim()
-        .to_string())
+        .to_string();
+    // 接口没给时长就按 WAV 的大小算（16 kHz、16 位：每毫秒 32 字节）
+    let ms = v
+        .get("duration_ms")
+        .and_then(|d| d.as_u64())
+        .unwrap_or((wav.len().saturating_sub(44) / 32) as u64);
+    Ok((text, ms))
 }
 
-fn chat(key: &str, system: &str, user: &str, json: bool, timeout: u64) -> Result<String, Fail> {
+/// DeepSeek 实际用的是哪个模型：变了就记一笔日志，方便查问题
+fn note_model(v: &serde_json::Value) {
+    static LAST: Mutex<String> = Mutex::new(String::new());
+    let Some(model) = v.get("model").and_then(|m| m.as_str()) else {
+        return;
+    };
+    let mut last = lock(&LAST);
+    if *last != model {
+        crate::logger::info(&format!("lecture model: {model}"));
+        *last = model.to_string();
+    }
+}
+
+fn usage_of(v: &serde_json::Value) -> Usage {
+    let n = |name: &str| {
+        v.pointer(&format!("/usage/{name}"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0)
+    };
+    let hit = n("prompt_cache_hit_tokens");
+    let miss = match n("prompt_cache_miss_tokens") {
+        0 => n("prompt_tokens").saturating_sub(hit),
+        m => m,
+    };
+    Usage {
+        asr_ms: 0,
+        hit,
+        miss,
+        out: n("completion_tokens"),
+    }
+}
+
+fn chat(
+    key: &str,
+    system: &str,
+    user: &str,
+    json: bool,
+    timeout: u64,
+) -> Result<(String, Usage), Fail> {
     let mut body = serde_json::json!({
         "model": MODEL,
         "temperature": 0.3,
@@ -613,16 +689,22 @@ fn chat(key: &str, system: &str, user: &str, json: bool, timeout: u64) -> Result
         .send()
         .map_err(|_| Fail::Later("DeepSeek 暂时连不上，连上了会接着翻译和整理".into()))?;
     if !resp.status().is_success() {
-        return Err(status_fail(resp.status().as_u16()));
+        return Err(match resp.status().as_u16() {
+            400 => Fail::Skip("DeepSeek 不接受这次请求，跳过了".into()),
+            code => status_fail(code),
+        });
     }
     let v: serde_json::Value = resp
         .json()
         .map_err(|_| Fail::Later("DeepSeek 回来的内容读不懂，稍后再试".into()))?;
-    Ok(v.pointer("/choices/0/message/content")
+    note_model(&v);
+    let text = v
+        .pointer("/choices/0/message/content")
         .and_then(|c| c.as_str())
         .unwrap_or("")
         .trim()
-        .to_string())
+        .to_string();
+    Ok((text, usage_of(&v)))
 }
 
 const TRANSLATE_PROMPT: &str =
@@ -631,7 +713,7 @@ const TRANSLATE_PROMPT: &str =
 这段话是按停顿切出来的，开头结尾可能不完整：按意思翻，不要补充、不要解释。\
 \u{201c}前文\u{201d}只是帮你理解上下文的，不要翻译它。只输出这一段的译文。";
 
-fn translate(key: &str, context: &[Segment], en: &str) -> Result<String, Fail> {
+fn translate(key: &str, context: &[Segment], en: &str) -> Result<(String, Usage), Fail> {
     let mut user = String::new();
     if !context.is_empty() {
         user.push_str("前文：\n");
@@ -667,10 +749,20 @@ fn notes_prompt(final_pass: bool, course: &str, date: &str) -> String {
     )
 }
 
-fn clock(ms: u64) -> String {
-    let secs = ms / 1000;
-    // 只是给模型看个先后，不用换成本地时间
-    format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
+/// 按上课那台电脑的时区算的"时:分"
+fn clock(ms: u64, offset_min: i32) -> String {
+    let local = ms as i64 + offset_min as i64 * 60_000;
+    let mins = local.div_euclid(60_000);
+    format!(
+        "{:02}:{:02}",
+        mins.div_euclid(60).rem_euclid(24),
+        mins.rem_euclid(60)
+    )
+}
+
+/// 按上课那台电脑的时区算的日期
+fn local_date(ms: u64, offset_min: i32) -> String {
+    date_of((ms as i64 + offset_min as i64 * 60_000).max(0) as u64)
 }
 
 fn date_of(ms: u64) -> String {
@@ -688,18 +780,23 @@ fn date_of(ms: u64) -> String {
 }
 
 /// 整理一遍：成功返回笔记
-fn summarize(key: &str, session: &Session, final_pass: bool) -> Result<Notes, Fail> {
+fn summarize(key: &str, session: &Session, final_pass: bool) -> Result<(Notes, Usage), Fail> {
     let mut text = String::new();
     for seg in &session.segments {
-        text.push_str(&clock(seg.at));
+        text.push_str(&clock(seg.at, session.utc_offset_min));
         text.push(' ');
         text.push_str(&seg.en);
         text.push('\n');
     }
-    let date = date_of(session.started_at.unwrap_or_else(now_ms));
+    let date = local_date(
+        session.started_at.unwrap_or_else(now_ms),
+        session.utc_offset_min,
+    );
     let prompt = notes_prompt(final_pass, &session.course, &date);
-    let out = chat(key, &prompt, &text, true, 180)?;
-    serde_json::from_str::<Notes>(&out).map_err(|_| Fail::Later("笔记没整理出来，稍后再试".into()))
+    let (out, usage) = chat(key, &prompt, &text, true, 180)?;
+    let notes = serde_json::from_str::<Notes>(&out)
+        .map_err(|_| Fail::Later("笔记没整理出来，稍后再试".into()))?;
+    Ok((notes, usage))
 }
 
 /// 另开一个线程整理（听课中的提纲、或者下课后的完整整理）
@@ -721,8 +818,11 @@ fn spawn_summary(app: AppHandle, generation: u64, final_pass: bool) {
             inner.summarizing = false;
             // 草稿回来时已经下课了：以完整整理的为准，草稿扔掉
             let stale = !final_pass && matches!(inner.status, Status::Finishing | Status::Done);
+            if let Ok((_, usage)) = &result {
+                inner.s.usage.add(*usage);
+            }
             match result {
-                Ok(notes) if !stale => {
+                Ok((notes, _)) if !stale => {
                     inner.s.notes = Some(notes);
                     inner.s.notes_at = Some(now_ms());
                     inner.notes_upto = count;
@@ -764,9 +864,13 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                     };
                     // 听写：送不出去就停在这一段上，隔一会儿再试，后面的排队
                     let mut wait = 2u64;
+                    let mut heard = 0u64;
                     let text = loop {
                         match transcribe(&key, &wav) {
-                            Ok(text) => break Some(text),
+                            Ok((text, ms)) => {
+                                heard = ms;
+                                break Some(text);
+                            }
                             Err(Fail::Skip(msg)) => {
                                 update(&app, generation, |inner| inner.error = Some(msg));
                                 break None;
@@ -785,6 +889,7 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                     };
                     let mut context = Vec::new();
                     let alive = update(&app, generation, |inner| {
+                        inner.s.usage.asr_ms += heard;
                         inner.queued = inner.queued.saturating_sub(1);
                         inner.retrying = false;
                         if inner.error.as_deref().is_some_and(|e| {
@@ -811,18 +916,35 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                     };
                     // 翻译：失败两次就留空，界面上写"没翻译出来"，不卡住后面的
                     let mut zh = String::new();
+                    let mut spent = Usage::default();
+                    let mut failed = None;
                     for attempt in 0..2 {
                         match translate(&key, &context, &en) {
-                            Ok(out) => {
+                            Ok((out, usage)) => {
                                 zh = out;
+                                spent = usage;
+                                failed = None;
                                 break;
                             }
-                            Err(_) if attempt == 0 => std::thread::sleep(Duration::from_secs(2)),
-                            Err(_) => {}
+                            // 请求本身不被接受：再试也一样
+                            Err(Fail::Skip(msg)) => {
+                                failed = Some(msg);
+                                break;
+                            }
+                            Err(Fail::Later(msg)) => {
+                                failed = Some(msg);
+                                if attempt == 0 {
+                                    std::thread::sleep(Duration::from_secs(2));
+                                }
+                            }
                         }
                     }
                     let mut due = false;
                     update(&app, generation, |inner| {
+                        inner.s.usage.add(spent);
+                        if let Some(msg) = failed {
+                            inner.error = Some(msg);
+                        }
                         if let Some(seg) = inner.s.segments.iter_mut().find(|s| s.id == id) {
                             seg.zh = Some(zh);
                         }
@@ -886,6 +1008,7 @@ pub fn lecture_start(
     course: String,
     course_id: Option<String>,
     key: String,
+    utc_offset_min: Option<i32>,
 ) -> Result<(), String> {
     let key = key.trim().to_string();
     if key.is_empty() {
@@ -914,6 +1037,7 @@ pub fn lecture_start(
                 course,
                 course_id,
                 started_at: Some(now),
+                utc_offset_min: utc_offset_min.unwrap_or(0).clamp(-14 * 60, 14 * 60),
                 ..Session::default()
             },
             key,
@@ -1265,6 +1389,11 @@ mod tests {
     fn dates() {
         assert_eq!(date_of(0), "1970-01-01");
         assert_eq!(date_of(1_795_000_000_000), "2026-11-18");
+        // 北京时间早上 7 点的课，UTC 还是前一天
+        let seven_am_beijing = 1_795_046_400_000 - 86_400_000 + 23 * 3_600_000;
+        assert_eq!(local_date(seven_am_beijing, 480), "2026-11-19");
+        assert_eq!(clock(seven_am_beijing, 480), "07:00");
+        assert_eq!(clock(seven_am_beijing, 0), "23:00");
     }
 
     #[test]

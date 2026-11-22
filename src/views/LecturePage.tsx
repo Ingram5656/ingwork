@@ -8,6 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent
 import { IconCheck } from "../components/Icons";
 import { t, tMsg, useLang } from "../lib/i18n";
 import {
+  costText,
   lecture,
   listenedNow,
   notesMarkdown,
@@ -194,6 +195,8 @@ function Live({ s }: { s: LectureState }) {
   if (s.status === "paused") sub = t("暂停了，听了 {n} 分钟", { n: listened });
   if (s.status === "finishing") sub = t("录音停了，正在整理整节课");
   if (s.status === "done") sub = t("这节课听了 {n} 分钟", { n: listened });
+  const cost = costText(s.usage);
+  if (cost && s.status !== "finishing") sub += t("，大概花了 {cost}", { cost });
 
   return (
     <>

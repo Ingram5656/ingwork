@@ -6,6 +6,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "./i18n";
 import { getSettings, subscribeSettings } from "./settings";
 import { call, onEvent } from "./tauri";
 
@@ -35,6 +36,32 @@ export interface LectureNotes {
 
 export type LectureStatus = "idle" | "listening" | "paused" | "finishing" | "done";
 
+export interface LectureUsage {
+  asrMs: number;
+  hit: number;
+  miss: number;
+  out: number;
+}
+
+/**
+ * 大概花了多少美元。按 DeepSeek 标价的上限算（听写不算限时折扣、模型按高峰价），
+ * 实际只会更少。价格变了改这里。
+ */
+export function costOf(u: LectureUsage | undefined): number {
+  if (!u) return 0;
+  const asr = (u.asrMs / 3_600_000) * 0.116;
+  const llm = (u.hit * 0.006 + u.miss * 0.3 + u.out * 1.2) / 1_000_000;
+  return asr + llm;
+}
+
+/** "$0.03"；太少就写"不到 $0.01" */
+export function costText(u: LectureUsage | undefined): string {
+  const c = costOf(u);
+  if (c <= 0) return "";
+  if (c < 0.01) return t("不到 $0.01");
+  return `$${c.toFixed(2)}`;
+}
+
 export interface LectureState {
   status: LectureStatus;
   /** 这节笔记的编号（存档用），没开始是 null */
@@ -53,6 +80,8 @@ export interface LectureState {
   notes: LectureNotes | null;
   /** 笔记上次整理的时刻 */
   notesAt: number | null;
+  /** 用了多少：听写时长（毫秒）、命中缓存 / 没命中的输入字数、输出字数 */
+  usage: LectureUsage;
   /** 下一次整理大约在什么时候（听课中才有） */
   nextNotesAt: number | null;
   /** 正在整理笔记 */
@@ -83,6 +112,7 @@ const EMPTY: LectureState = {
   backlog: 0,
   notes: null,
   notesAt: null,
+  usage: { asrMs: 0, hit: 0, miss: 0, out: 0 },
   nextNotesAt: null,
   summarizing: false,
   error: null,
@@ -164,7 +194,13 @@ export function listenedNow(s: LectureState, now: number): number {
 export const lecture = {
   /** 开始听：course 是课名，从课表开始的带上那节课的编号。打不开麦克风之类的返回中文说明 */
   start: (course: string, courseId: string | null = null) =>
-    invoke("lecture_start", { course, courseId, key: getSettings().lectureKey }).then(
+    invoke("lecture_start", {
+      course,
+      courseId,
+      key: getSettings().lectureKey,
+      // 按这台电脑的时区给模型看日期和时刻
+      utcOffsetMin: -new Date().getTimezoneOffset(),
+    }).then(
       () => null,
       (e) => String(e),
     ),
