@@ -6,6 +6,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { IconCheck } from "../components/Icons";
+import { SlidesBar } from "../components/SlidesBar";
 import { t, tMsg, useLang } from "../lib/i18n";
 import {
   costText,
@@ -129,6 +130,8 @@ function Starter({ openSettings }: Props) {
         }}
       />
 
+      {hasKey && name ? <SlidesBar course={name} courseId={chosen ? chosen.course.id : null} explain /> : null}
+
       {hasKey ? (
         <div className="lec-start__go">
           <button
@@ -231,7 +234,12 @@ function Live({ s }: { s: LectureState }) {
         </div>
       </header>
 
-      {s.status === "listening" || s.status === "paused" ? <LevelBand quiet={!listening} /> : null}
+      {s.status === "listening" || s.status === "paused" ? (
+        <>
+          <SlidesBar course={s.course} courseId={s.courseId} />
+          <LevelBand quiet={!listening} />
+        </>
+      ) : null}
 
       <ol className="lec-stream" ref={listRef} onScroll={onScroll} aria-live="polite">
         {s.segments.length === 0 && !s.pending ? (

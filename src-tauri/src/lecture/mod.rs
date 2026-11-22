@@ -12,7 +12,12 @@
 //! 状态每变一次就把整份发给界面（lecture-state），界面只管画。
 
 mod audio;
+// 命令要用完整路径登记（tauri 的命令宏不跟着 pub use 走），所以这个模块是 pub
+pub mod course;
+mod glossary;
 mod stitch;
+
+use glossary::Glossary;
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -205,6 +210,10 @@ struct Inner {
     error: Option<String>,
     pending: Option<Pending>,
     quiet: bool,
+    /// 这门课的术语表（课件、以前笔记、生词本）
+    glossary: Arc<Glossary>,
+    /// 生词本里的词（重新拼术语表时用）
+    words: Vec<String>,
     stop: Option<Arc<AtomicBool>>,
     paused: Arc<AtomicBool>,
 }
@@ -225,6 +234,8 @@ impl Default for Inner {
             error: None,
             pending: None,
             quiet: false,
+            glossary: Arc::new(Glossary::default()),
+            words: Vec::new(),
             stop: None,
             paused: Arc::new(AtomicBool::new(false)),
         }
@@ -525,7 +536,12 @@ const TRANSLATE_PROMPT: &str =
 这段话是按停顿切出来的，开头结尾可能不完整：按意思翻，不要补充、不要解释。\
 \u{201c}前文\u{201d}只是帮你理解上下文的，不要翻译它。只输出这一段的译文。";
 
-fn translate(key: &str, context: &[Segment], en: &str) -> Result<(String, Usage), Fail> {
+fn translate(
+    key: &str,
+    glossary: &str,
+    context: &[Segment],
+    en: &str,
+) -> Result<(String, Usage), Fail> {
     let mut user = String::new();
     if !context.is_empty() {
         user.push_str("前文：\n");
@@ -537,7 +553,9 @@ fn translate(key: &str, context: &[Segment], en: &str) -> Result<(String, Usage)
     }
     user.push_str("这一段：\n");
     user.push_str(en);
-    chat(key, TRANSLATE_PROMPT, &user, false, 45)
+    // 说明和术语表放在最前面：每次都一样，能吃到缓存
+    let system = format!("{TRANSLATE_PROMPT}{glossary}");
+    chat(key, &system, &user, false, 45)
 }
 
 fn notes_prompt(final_pass: bool, course: &str, date: &str) -> String {
@@ -592,7 +610,12 @@ fn date_of(ms: u64) -> String {
 }
 
 /// 整理一遍：成功返回笔记
-fn summarize(key: &str, session: &Session, final_pass: bool) -> Result<(Notes, Usage), Fail> {
+fn summarize(
+    key: &str,
+    glossary: &str,
+    session: &Session,
+    final_pass: bool,
+) -> Result<(Notes, Usage), Fail> {
     let mut text = String::new();
     for seg in &session.segments {
         text.push_str(&clock(seg.at, session.utc_offset_min));
@@ -604,7 +627,10 @@ fn summarize(key: &str, session: &Session, final_pass: bool) -> Result<(Notes, U
         session.started_at.unwrap_or_else(now_ms),
         session.utc_offset_min,
     );
-    let prompt = notes_prompt(final_pass, &session.course, &date);
+    let prompt = format!(
+        "{}{glossary}",
+        notes_prompt(final_pass, &session.course, &date)
+    );
     let (out, usage) = chat(key, &prompt, &text, true, 180)?;
     let notes = serde_json::from_str::<Notes>(&out)
         .map_err(|_| Fail::Later("笔记没整理出来，稍后再试".into()))?;
@@ -619,13 +645,17 @@ fn spawn_summary(app: AppHandle, generation: u64, final_pass: bool) {
             return;
         }
         inner.summarizing = true;
-        (inner.key.clone(), inner.s.clone())
+        (
+            inner.key.clone(),
+            inner.glossary.prompt_block(),
+            inner.s.clone(),
+        )
     };
     publish(&app);
     std::thread::spawn(move || {
-        let (key, session) = snapshot;
+        let (key, glossary, session) = snapshot;
         let count = session.segments.len();
-        let result = summarize(&key, &session, final_pass);
+        let result = summarize(&key, &glossary, &session, final_pass);
         let ok = update(&app, generation, |inner| {
             inner.summarizing = false;
             // 草稿回来时已经下课了：以完整整理的为准，草稿扔掉
@@ -669,6 +699,7 @@ fn emit_sentence(
     app: &AppHandle,
     generation: u64,
     key: &str,
+    glossary: &str,
     id: u64,
     at: u64,
     en: String,
@@ -692,7 +723,7 @@ fn emit_sentence(
     let mut spent = Usage::default();
     let mut failed = None;
     for attempt in 0..2 {
-        match translate(key, &context, &en) {
+        match translate(key, glossary, &context, &en) {
             Ok((out, usage)) => {
                 zh = out;
                 spent = usage;
@@ -766,13 +797,14 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                     Job::Finish => finishing = true,
                 }
             }
-            let key = {
+            let (key, glossary) = {
                 let inner = lock(&app.state::<Lecture>().inner().0);
                 if inner.generation != generation {
                     return;
                 }
-                inner.key.clone()
+                (inner.key.clone(), inner.glossary.clone())
             };
+            let block = glossary.prompt_block();
 
             if queue.is_empty() {
                 // 半句话等太久，或者下课了：不等了
@@ -781,7 +813,7 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                         update(&app, generation, |inner| inner.pending = None);
                         let id = next_id;
                         next_id += 1;
-                        if emit_sentence(&app, generation, &key, id, at, en) {
+                        if emit_sentence(&app, generation, &key, &block, id, at, en) {
                             spawn_summary(app.clone(), generation, false);
                         }
                     }
@@ -833,6 +865,8 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
             if overlap && !text.is_empty() {
                 text = stitch::dedupe(&last_text, &text);
             }
+            // 听错的专业词按术语表改过来
+            text = glossary.correct(&text);
             let keep = !stitch::is_noise(&text, &last_text);
             if keep {
                 last_text = text.clone();
@@ -863,7 +897,7 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
             if let Some((at, en)) = sentence {
                 let id = next_id;
                 next_id += 1;
-                if emit_sentence(&app, generation, &key, id, at, en) {
+                if emit_sentence(&app, generation, &key, &block, id, at, en) {
                     spawn_summary(app.clone(), generation, false);
                 }
             }
@@ -918,6 +952,7 @@ pub fn lecture_start(
     key: String,
     utc_offset_min: Option<i32>,
     denoise: Option<bool>,
+    words: Option<Vec<String>>,
 ) -> Result<(), String> {
     let key = key.trim().to_string();
     if key.is_empty() {
@@ -927,6 +962,14 @@ pub fn lecture_start(
     if course.is_empty() {
         return Err("写一个课名".into());
     }
+    // 这门课的术语表：课件、以前的笔记、生词本
+    let words: Vec<String> = words.unwrap_or_default().into_iter().take(500).collect();
+    let glossary = Arc::new(course::glossary_for(
+        &app,
+        &course,
+        course_id.as_deref(),
+        &words,
+    ));
     let (generation, stop, paused, tx) = {
         let mut inner = lock(&lecture.0);
         if matches!(
@@ -953,6 +996,8 @@ pub fn lecture_start(
             generation,
             listening_since: Some(now),
             next_notes_at: Some(now + NOTES_EVERY.as_millis() as u64),
+            glossary,
+            words,
             stop: Some(stop.clone()),
             paused: paused.clone(),
             ..Inner::default()

@@ -382,7 +382,9 @@ class Pdf {
         let data = stream.raw;
         for (const f of filters) {
           if (f === "FlateDecode" || f === "Fl") data = await inflate(data);
-          else return new Uint8Array(0); // 别的压缩方式课表 PDF 里用不上，不认
+          else if (f === "ASCII85Decode" || f === "A85") data = ascii85(data);
+          else if (f === "ASCIIHexDecode" || f === "AHx") data = asciiHex(data);
+          else return new Uint8Array(0); // 图片用的压缩方式，读文字用不上
         }
         return data;
       })();
@@ -390,6 +392,53 @@ class Pdf {
     }
     return p;
   }
+}
+
+/** ASCII85：每 5 个字符变 4 个字节，"z" 是 4 个 0，"~>" 结束 */
+function ascii85(data: Uint8Array): Uint8Array {
+  const out: number[] = [];
+  const group: number[] = [];
+  const flush = (n: number) => {
+    while (group.length < 5) group.push(84);
+    let v = 0;
+    for (const c of group) v = v * 85 + c;
+    const bytes = [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255];
+    out.push(...bytes.slice(0, n));
+    group.length = 0;
+  };
+  for (let i = 0; i < data.length; i++) {
+    const c = data[i];
+    if (c === 0x7e) break; // "~>"
+    if (c <= 0x20) continue;
+    if (c === 0x7a && group.length === 0) {
+      out.push(0, 0, 0, 0);
+      continue;
+    }
+    if (c < 0x21 || c > 0x75) continue;
+    group.push(c - 33);
+    if (group.length === 5) flush(4);
+  }
+  if (group.length > 1) flush(group.length - 1);
+  return new Uint8Array(out);
+}
+
+/** 十六进制："48656C6C6F>" */
+function asciiHex(data: Uint8Array): Uint8Array {
+  const out: number[] = [];
+  let hi = -1;
+  for (const c of data) {
+    if (c === 0x3e) break;
+    const ch = String.fromCharCode(c);
+    const v = parseInt(ch, 16);
+    if (Number.isNaN(v)) continue;
+    if (hi < 0) hi = v;
+    else {
+      out.push(hi * 16 + v);
+      hi = -1;
+    }
+  }
+  if (hi >= 0) out.push(hi * 16);
+  return new Uint8Array(out);
 }
 
 // ---------- 字体 ----------
@@ -822,8 +871,8 @@ function joinGlyphs(items: PdfText[]): PdfText[] {
   return out;
 }
 
-/** 读整份 PDF：每页的文字和位置，加上标签树（有的话） */
-export async function readPdf(bytes: Uint8Array): Promise<PdfDoc> {
+/** 读整份 PDF：每页的文字和位置，加上标签树（有的话）。最多读 maxPages 页（课表 60 页足够，课件要多一些） */
+export async function readPdf(bytes: Uint8Array, maxPages = 60): Promise<PdfDoc> {
   const head = latin1(bytes.subarray(0, 1024));
   if (!head.includes("%PDF")) throw new Error("not pdf");
   const pdf = new Pdf(bytes);
@@ -844,7 +893,7 @@ export async function readPdf(bytes: Uint8Array): Promise<PdfDoc> {
 
   const fonts = new Map<PdfValue, Promise<Font>>();
   const out: PdfText[][] = [];
-  for (let i = 0; i < pages.length && i < 60; i++) {
+  for (let i = 0; i < pages.length && i < maxPages; i++) {
     const { dict, inherited } = pages[i];
     const resources = pdf.dict(dict.get("Resources") ?? inherited.get("Resources"));
     const parts: string[] = [];

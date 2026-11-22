@@ -5245,6 +5245,85 @@ html.is-island #root {
 }
 
 /* 左边：听课中 */
+/* 课件一行：开始之前在课名下面，听课中在标题下面 */
+.slides {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lec-live > .slides {
+  padding: 0 26px 8px 30px;
+}
+
+.slides__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.slides__label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-right: 2px;
+}
+
+.slides__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  height: 30px;
+  padding: 0 4px 0 12px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 13px;
+}
+
+.slides__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.slides__count {
+  flex: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+}
+
+.slides__remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slides__remove:hover,
+.slides__remove:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.slides__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.slides__error {
+  margin: 0;
+}
+
 .lec-head {
   display: flex;
   align-items: center;

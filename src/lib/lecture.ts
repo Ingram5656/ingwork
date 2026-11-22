@@ -7,7 +7,9 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
+import { getPlanner } from "./planner";
 import { getSettings, subscribeSettings } from "./settings";
+import { readSlides } from "./slides";
 import { call, onEvent } from "./tauri";
 
 /** 一段话：英文原文和中文翻译 */
@@ -207,6 +209,8 @@ export const lecture = {
       // 按这台电脑的时区给模型看日期和时刻
       utcOffsetMin: -new Date().getTimezoneOffset(),
       denoise: getSettings().lectureDenoise,
+      // 生词本里的词也算进这门课的术语表（拼写以它为准）
+      words: getPlanner().words.map((w) => w.word),
     }).then(
       () => null,
       (e) => String(e),
@@ -278,3 +282,57 @@ export function notesMarkdown(s: LectureState, withTranscript = false): string {
   }
   return lines.join("\n");
 }
+
+// ---------- 课件（可选，随时传） ----------
+
+export interface SlideInfo {
+  name: string;
+  addedAt: number;
+  terms: number;
+}
+
+export interface Material {
+  slides: SlideInfo[];
+  terms: number;
+}
+
+const NO_MATERIAL: Material = { slides: [], terms: 0 };
+
+/** 这门课传过的课件。course 是空的就不查 */
+export function useMaterial(course: string, courseId: string | null): [Material, (m: Material) => void] {
+  const [material, setMaterial] = useState<Material>(NO_MATERIAL);
+  useEffect(() => {
+    if (!course.trim()) {
+      setMaterial(NO_MATERIAL);
+      return;
+    }
+    let alive = true;
+    invoke<Material>("lecture_material", { course, courseId })
+      .then((m) => alive && setMaterial(m))
+      .catch(() => alive && setMaterial(NO_MATERIAL));
+    return () => {
+      alive = false;
+    };
+  }, [course, courseId]);
+  return [material, setMaterial];
+}
+
+export const slides = {
+  /** 读课件、整理出术语和提纲。失败抛出中文说明 */
+  add: async (course: string, courseId: string | null, file: File): Promise<Material> => {
+    const text = await readSlides(file);
+    try {
+      return await invoke<Material>("lecture_add_slides", {
+        course,
+        courseId,
+        name: file.name,
+        text,
+        key: getSettings().lectureKey,
+      });
+    } catch (e) {
+      throw new Error(String(e));
+    }
+  },
+  remove: (course: string, courseId: string | null, name: string) =>
+    invoke<Material>("lecture_remove_slides", { course, courseId, name }),
+};
