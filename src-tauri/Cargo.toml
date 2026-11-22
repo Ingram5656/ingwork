@@ -1,6 +1,6 @@
 [package]
 name = "ingwork"
-version = "0.2.3"
+version = "0.3.0"
 description = "ingwork：课表、待办、番茄钟和翻译放在一起"
 authors = ["Ingram & Claude"]
 edition = "2021"
