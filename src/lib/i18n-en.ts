@@ -822,4 +822,7 @@ export const EN: Record<string, string> = {
   "，大概花了 {cost}": ", about {cost}",
   "DeepSeek 不认这个请求了，可能是接口有变化，请看看 ingwork 有没有新版本": "DeepSeek no longer accepts this request. The API may have changed, so check for an ingwork update",
   "DeepSeek 不接受这次请求，跳过了": "DeepSeek rejected this request, so it was skipped",
+  "等这句说完再翻译": "Waiting for the sentence to finish",
+  "声音有点小，坐近一点或者换个麦克风": "It's a bit quiet. Sit closer or try another microphone",
+  "降噪：去掉空调、风扇这类一直响的声音": "Noise reduction: remove steady sounds like air conditioning and fans",
 };

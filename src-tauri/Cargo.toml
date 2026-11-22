@@ -29,6 +29,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 rodio = "0.19"
 # 听课录音（rodio 自己也用它放声音，版本保持一致）
 cpal = "0.15"
+# 听课：判断有没有人说话（纯 Rust 的小神经网络，约 100 KB）
+earshot = "1.2"
+# 听课：降噪（RNNoise 的 Rust 版）。默认功能会带上命令行工具，不要
+nnnoiseless = { version = "0.5", default-features = false }
 include_dir = "0.7"
 # 翻译小窗读写剪贴板；只要文字，不要图片支持（和 ingtranslate 一样）
 arboard = { version = "3", default-features = false }

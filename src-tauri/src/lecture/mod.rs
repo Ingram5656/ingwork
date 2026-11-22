@@ -2,16 +2,20 @@
 //! 听课中每 5 分钟左右整理一次提纲，下课后从头到尾完整整理成笔记。
 //!
 //! 三条线：
-//! - 录音线程：开麦克风，转成 16 kHz 单声道，按停顿切成十秒左右的一段（最长 15 秒），
+//! - 录音线程：开麦克风，换成 16 kHz（可以先降噪），判断有没有人说话、按停顿切段（audio.rs），
 //!   每 0.1 秒把音量发给界面（音量带）。切好的段交给处理线程。
-//! - 处理线程：按顺序一段一段送去听写（DeepSeek 的语音识别），再翻译（deepseek-flash）。
-//!   送不出去（断网、DeepSeek 忙）就停在这一段上隔一会儿再试，后面的排着队，顺序不会乱。
+//! - 处理线程：按顺序送去听写（DeepSeek 的语音识别）；断网时攒着，恢复后几段合成一次送。
+//!   听写回来去掉和上一段重叠的词、过滤听写幻觉，拼成整句再翻译（stitch.rs，deepseek-flash）。
 //! - 整理：每 5 分钟另开一个线程整理一版提纲；下课时处理完最后一段，再完整整理一遍。
 //!
 //! 录音不存，只存文字：每节课一个文件，放在数据文件夹的 lectures/ 里，几台电脑同步。
 //! 状态每变一次就把整份发给界面（lecture-state），界面只管画。
 
+mod audio;
+mod stitch;
+
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -26,10 +30,6 @@ const BALANCE_URL: &str = "https://api.deepseek.com/user/balance";
 const PLATFORM_URL: &str = "https://platform.deepseek.com/";
 const MODEL: &str = "deepseek-flash";
 
-/// 送去听写的采样率
-const RATE: u32 = 16_000;
-/// 0.1 秒一帧：算一次音量、判断一次有没有在说话
-const FRAME: usize = (RATE / 10) as usize;
 /// 听课中多久整理一次提纲
 const NOTES_EVERY: Duration = Duration::from_secs(5 * 60);
 
@@ -156,6 +156,17 @@ struct View<'a> {
     next_notes_at: Option<u64>,
     summarizing: bool,
     error: Option<String>,
+    /// 还没说完、等着凑成整句的半句话
+    pending: Option<Pending>,
+    /// 说话的声音太小
+    quiet: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Pending {
+    at: u64,
+    en: String,
 }
 
 /// 以前的笔记，列表里的一行
@@ -170,8 +181,8 @@ pub struct Entry {
 }
 
 enum Job {
-    /// 切好的一段：编号、开始的时刻、WAV 文件
-    Chunk { id: u64, at: u64, wav: Vec<u8> },
+    /// 切好的一段
+    Chunk(audio::Chunk),
     /// 下课了：前面的处理完就完整整理
     Finish,
 }
@@ -192,6 +203,8 @@ struct Inner {
     /// 上一版提纲整理到第几段
     notes_upto: usize,
     error: Option<String>,
+    pending: Option<Pending>,
+    quiet: bool,
     stop: Option<Arc<AtomicBool>>,
     paused: Arc<AtomicBool>,
 }
@@ -210,6 +223,8 @@ impl Default for Inner {
             summarizing: false,
             notes_upto: 0,
             error: None,
+            pending: None,
+            quiet: false,
             stop: None,
             paused: Arc::new(AtomicBool::new(false)),
         }
@@ -228,6 +243,8 @@ fn view(inner: &Inner) -> serde_json::Value {
         next_notes_at: inner.next_notes_at,
         summarizing: inner.summarizing,
         error: inner.error.clone(),
+        pending: inner.pending.clone(),
+        quiet: inner.quiet && inner.status == Status::Listening,
     })
     .unwrap_or(serde_json::Value::Null)
 }
@@ -290,223 +307,20 @@ fn safe_id(id: &str) -> Result<&str, String> {
     }
 }
 
-// ---------- 录音和切段 ----------
+// ---------- 录音 ----------
 
-/// 按停顿切段：攒到 4 秒以上、又停顿了 0.6 秒就切；一直不停最多 15 秒也切。
-/// 一句话都没说的段不送（省钱，也免得听写出一堆"嗯"）
-struct Cutter {
-    /// 输入的采样率 / 16000：每多少个输入样本出一个
-    step: f64,
-    phase: f64,
-    acc: f32,
-    count: u32,
-    frame: Vec<f32>,
-    buf: Vec<f32>,
-    /// buf 第一个样本对应的时刻
-    buf_at: u64,
-    speech: usize,
-    silence: usize,
-    /// 环境噪音有多响，慢慢跟着变
-    floor: f32,
-}
-
-impl Cutter {
-    fn new(input_rate: u32) -> Self {
-        Self {
-            step: input_rate as f64 / RATE as f64,
-            phase: 0.0,
-            acc: 0.0,
-            count: 0,
-            frame: Vec::with_capacity(FRAME),
-            buf: Vec::new(),
-            buf_at: 0,
-            speech: 0,
-            silence: 0,
-            floor: 0.01,
-        }
-    }
-
-    /// 喂一块单声道样本。每满 0.1 秒调一次 on_level，切出一段调一次 on_chunk
-    fn push(
-        &mut self,
-        input: &[f32],
-        on_level: &mut impl FnMut(f32),
-        on_chunk: &mut impl FnMut(u64, Vec<f32>),
-    ) {
-        for &x in input {
-            // 降到 16 kHz：一个输出样本取它覆盖的那几个输入样本的平均，顺便滤掉高频
-            self.acc += x;
-            self.count += 1;
-            self.phase += 1.0;
-            if self.phase >= self.step {
-                self.phase -= self.step;
-                let y = self.acc / self.count as f32;
-                self.acc = 0.0;
-                self.count = 0;
-                self.frame.push(y);
-                if self.frame.len() == FRAME {
-                    let frame = std::mem::take(&mut self.frame);
-                    self.on_frame(frame, on_level, on_chunk);
-                    self.frame = Vec::with_capacity(FRAME);
-                }
-            }
-        }
-    }
-
-    fn on_frame(
-        &mut self,
-        frame: Vec<f32>,
-        on_level: &mut impl FnMut(f32),
-        on_chunk: &mut impl FnMut(u64, Vec<f32>),
-    ) {
-        let rms = (frame.iter().map(|v| v * v).sum::<f32>() / frame.len() as f32).sqrt();
-        let db = 20.0 * (rms + 1e-9).log10();
-        on_level(((db + 55.0) / 45.0).clamp(0.0, 1.0));
-
-        // 噪音底：往下跟得快，往上跟得慢（说话时不会被当成噪音）
-        if rms < self.floor {
-            self.floor = self.floor * 0.9 + rms * 0.1;
-        } else {
-            self.floor = self.floor * 0.998 + rms * 0.002;
-        }
-        let speaking = rms > (self.floor * 2.5).max(0.006);
-
-        if self.buf.is_empty() {
-            self.buf_at = now_ms().saturating_sub(100);
-        }
-        self.buf.extend_from_slice(&frame);
-        if speaking {
-            self.speech += 1;
-            self.silence = 0;
-        } else {
-            self.silence += 1;
-        }
-
-        // 还没人说话：只留最后 0.3 秒当开头，前面的静音扔掉
-        if self.speech == 0 && self.buf.len() > FRAME * 5 {
-            let keep = FRAME * 3;
-            let drop = self.buf.len() - keep;
-            self.buf.drain(..drop);
-            self.buf_at += (drop as u64) * 1000 / RATE as u64;
-            return;
-        }
-
-        let seconds = self.buf.len() / RATE as usize;
-        if self.speech > 0 && ((seconds >= 4 && self.silence >= 6) || seconds >= 15) {
-            self.cut(on_chunk);
-        }
-    }
-
-    /// 把攒着的切出去（暂停、下课时也调）
-    fn cut(&mut self, on_chunk: &mut impl FnMut(u64, Vec<f32>)) {
-        let buf = std::mem::take(&mut self.buf);
-        if self.speech >= 4 {
-            on_chunk(self.buf_at, buf);
-        }
-        self.speech = 0;
-        self.silence = 0;
-    }
-}
-
-/// 16 位、16 kHz、单声道 WAV
-fn wav(samples: &[f32]) -> Vec<u8> {
-    let data = samples.len() * 2;
-    let mut out = Vec::with_capacity(44 + data);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&((36 + data) as u32).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&RATE.to_le_bytes());
-    out.extend_from_slice(&(RATE * 2).to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&(data as u32).to_le_bytes());
-    for &s in samples {
-        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-        out.extend_from_slice(&v.to_le_bytes());
-    }
-    out
-}
-
-/// 打开默认麦克风：返回流（得一直拿着，丢了就停）、样本从哪儿来、采样率
-fn open_mic() -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), String> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "没找到麦克风，请检查有没有插好、系统设置里有没有关掉".to_string())?;
-    let config = device
-        .default_input_config()
-        .map_err(|_| "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风".to_string())?;
-    let channels = config.channels().max(1) as usize;
-    let rate = config.sample_rate().0;
-    let (tx, rx) = mpsc::channel::<Vec<f32>>();
-    let err = |e: cpal::StreamError| crate::logger::error(&format!("microphone: {e}"));
-
-    fn mono<T: Copy>(data: &[T], channels: usize, conv: impl Fn(T) -> f32) -> Vec<f32> {
-        data.chunks(channels)
-            .map(|frame| frame.iter().map(|&v| conv(v)).sum::<f32>() / frame.len() as f32)
-            .collect()
-    }
-
-    let stream_config: cpal::StreamConfig = config.clone().into();
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(mono(data, channels, |v| v));
-                },
-                err,
-                None,
-            )
-        }
-        cpal::SampleFormat::I16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(mono(data, channels, |v| v as f32 / 32768.0));
-                },
-                err,
-                None,
-            )
-        }
-        cpal::SampleFormat::U16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(mono(data, channels, |v| (v as f32 - 32768.0) / 32768.0));
-                },
-                err,
-                None,
-            )
-        }
-        _ => return Err("这个麦克风的格式不认识，换一个麦克风试试".into()),
-    }
-    .map_err(|_| "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风".to_string())?;
-    stream
-        .play()
-        .map_err(|_| "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风".to_string())?;
-    Ok((stream, rx, rate))
-}
-
-/// 录音线程：开麦克风，切段交给处理线程，下课时把最后一段和"下课了"交过去
+/// 录音线程：开麦克风，处理成 16 kHz、切段交给处理线程，下课时把最后一段和"下课了"交过去
 fn spawn_recorder(
     app: AppHandle,
     generation: u64,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    denoise: bool,
     jobs: Sender<Job>,
 ) -> Result<(), String> {
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     std::thread::spawn(move || {
-        let (stream, samples, rate) = match open_mic() {
+        let (stream, samples, rate) = match audio::open_mic() {
             Ok(v) => {
                 let _ = ready_tx.send(Ok(()));
                 v
@@ -516,19 +330,15 @@ fn spawn_recorder(
                 return;
             }
         };
-        let mut cutter = Cutter::new(rate);
-        let mut next_id: u64 = 1;
+        crate::logger::info(&format!("lecture microphone: {rate} Hz, denoise {denoise}"));
+        let mut pipeline = audio::Pipeline::new(rate, denoise);
+        let mut cutter = audio::Cutter::new(audio::detector());
+        let mut out = Vec::new();
         let mut was_paused = false;
         let mut quiet_at = Instant::now();
-        let mut send_chunk = |at: u64, buf: Vec<f32>| {
-            let wav = wav(&buf);
+        let mut send_chunk = |chunk: audio::Chunk| {
             if update(&app, generation, |inner| inner.queued += 1) {
-                let _ = jobs.send(Job::Chunk {
-                    id: next_id,
-                    at,
-                    wav,
-                });
-                next_id += 1;
+                let _ = jobs.send(Job::Chunk(chunk));
             }
         };
         let level_app = app.clone();
@@ -555,7 +365,9 @@ fn spawn_recorder(
                             on_level(0.0);
                         }
                     } else {
-                        cutter.push(&block, &mut on_level, &mut send_chunk);
+                        out.clear();
+                        pipeline.push(&block, &mut out);
+                        cutter.push(&out, now_ms(), &mut on_level, &mut send_chunk);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -849,146 +661,242 @@ fn spawn_summary(app: AppHandle, generation: u64, final_pass: bool) {
 
 // ---------- 处理线程 ----------
 
-fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
-    std::thread::spawn(move || {
-        let mut saved_at = 0usize;
-        while let Ok(job) = jobs.recv() {
-            match job {
-                Job::Chunk { id, at, wav } => {
-                    let key = {
-                        let inner = lock(&app.state::<Lecture>().inner().0);
-                        if inner.generation != generation {
-                            return;
-                        }
-                        inner.key.clone()
-                    };
-                    // 听写：送不出去就停在这一段上，隔一会儿再试，后面的排队
-                    let mut wait = 2u64;
-                    let mut heard = 0u64;
-                    let text = loop {
-                        match transcribe(&key, &wav) {
-                            Ok((text, ms)) => {
-                                heard = ms;
-                                break Some(text);
-                            }
-                            Err(Fail::Skip(msg)) => {
-                                update(&app, generation, |inner| inner.error = Some(msg));
-                                break None;
-                            }
-                            Err(Fail::Later(msg)) => {
-                                if !update(&app, generation, |inner| {
-                                    inner.error = Some(msg);
-                                    inner.retrying = true;
-                                }) {
-                                    return;
-                                }
-                                std::thread::sleep(Duration::from_secs(wait));
-                                wait = (wait * 2).min(30);
-                            }
-                        }
-                    };
-                    let mut context = Vec::new();
-                    let alive = update(&app, generation, |inner| {
-                        inner.s.usage.asr_ms += heard;
-                        inner.queued = inner.queued.saturating_sub(1);
-                        inner.retrying = false;
-                        if inner.error.as_deref().is_some_and(|e| {
-                            e.contains("连不上") || e.contains("余额") || e.contains("密钥")
-                        }) {
-                            inner.error = None;
-                        }
-                        if let Some(text) = text.as_ref().filter(|t| !t.is_empty()) {
-                            let n = inner.s.segments.len();
-                            context = inner.s.segments[n.saturating_sub(3)..].to_vec();
-                            inner.s.segments.push(Segment {
-                                id,
-                                at,
-                                en: text.clone(),
-                                zh: None,
-                            });
-                        }
-                    });
-                    if !alive {
-                        return;
-                    }
-                    let Some(en) = text.filter(|t| !t.is_empty()) else {
-                        continue;
-                    };
-                    // 翻译：失败两次就留空，界面上写"没翻译出来"，不卡住后面的
-                    let mut zh = String::new();
-                    let mut spent = Usage::default();
-                    let mut failed = None;
-                    for attempt in 0..2 {
-                        match translate(&key, &context, &en) {
-                            Ok((out, usage)) => {
-                                zh = out;
-                                spent = usage;
-                                failed = None;
-                                break;
-                            }
-                            // 请求本身不被接受：再试也一样
-                            Err(Fail::Skip(msg)) => {
-                                failed = Some(msg);
-                                break;
-                            }
-                            Err(Fail::Later(msg)) => {
-                                failed = Some(msg);
-                                if attempt == 0 {
-                                    std::thread::sleep(Duration::from_secs(2));
-                                }
-                            }
-                        }
-                    }
-                    let mut due = false;
-                    update(&app, generation, |inner| {
-                        inner.s.usage.add(spent);
-                        if let Some(msg) = failed {
-                            inner.error = Some(msg);
-                        }
-                        if let Some(seg) = inner.s.segments.iter_mut().find(|s| s.id == id) {
-                            seg.zh = Some(zh);
-                        }
-                        due = inner.status == Status::Listening
-                            && inner.next_notes_at.is_some_and(|t| now_ms() >= t)
-                            && inner.s.segments.len() > inner.notes_upto
-                            && !inner.summarizing;
-                    });
-                    if due {
-                        spawn_summary(app.clone(), generation, false);
-                    }
-                    // 隔几段存一次，中途关掉软件也丢不了多少
-                    let count = lock(&app.state::<Lecture>().inner().0).s.segments.len();
-                    if count >= saved_at + 6 {
-                        saved_at = count;
-                        save_current(&app, generation);
-                    }
-                }
-                Job::Finish => {
-                    save_current(&app, generation);
-                    let empty = lock(&app.state::<Lecture>().inner().0)
-                        .s
-                        .segments
-                        .is_empty();
-                    if empty {
-                        update(&app, generation, |inner| {
-                            inner.status = Status::Done;
-                            inner.next_notes_at = None;
-                            inner.error = Some("这节课没听到说话，没有可整理的".into());
-                        });
-                        crate::awake::lecture(false);
-                    } else {
-                        // 正在整理草稿的话等它回来再整理完整的
-                        for _ in 0..240 {
-                            if !lock(&app.state::<Lecture>().inner().0).summarizing {
-                                break;
-                            }
-                            std::thread::sleep(Duration::from_millis(500));
-                        }
-                        spawn_summary(app.clone(), generation, true);
-                    }
-                    return;
+/// 一次最多合并多少秒送去听写（接口上限 120 秒）
+const MERGE_MAX_SAMPLES: usize = audio::RATE as usize * 110;
+
+/// 把一句话加进左边、翻译好；返回要不要顺便整理一版提纲
+fn emit_sentence(
+    app: &AppHandle,
+    generation: u64,
+    key: &str,
+    id: u64,
+    at: u64,
+    en: String,
+) -> bool {
+    let mut context = Vec::new();
+    let alive = update(app, generation, |inner| {
+        let n = inner.s.segments.len();
+        context = inner.s.segments[n.saturating_sub(3)..].to_vec();
+        inner.s.segments.push(Segment {
+            id,
+            at,
+            en: en.clone(),
+            zh: None,
+        });
+    });
+    if !alive {
+        return false;
+    }
+    // 翻译：失败两次就留空，界面上写"没翻译出来"，不卡住后面的
+    let mut zh = String::new();
+    let mut spent = Usage::default();
+    let mut failed = None;
+    for attempt in 0..2 {
+        match translate(key, &context, &en) {
+            Ok((out, usage)) => {
+                zh = out;
+                spent = usage;
+                failed = None;
+                break;
+            }
+            // 请求本身不被接受：再试也一样
+            Err(Fail::Skip(msg)) => {
+                failed = Some(msg);
+                break;
+            }
+            Err(Fail::Later(msg)) => {
+                failed = Some(msg);
+                if attempt == 0 {
+                    std::thread::sleep(Duration::from_secs(2));
                 }
             }
+        }
+    }
+    let mut due = false;
+    update(app, generation, |inner| {
+        inner.s.usage.add(spent);
+        if let Some(msg) = failed {
+            inner.error = Some(msg);
+        }
+        if let Some(seg) = inner.s.segments.iter_mut().find(|s| s.id == id) {
+            seg.zh = Some(zh);
+        }
+        due = inner.status == Status::Listening
+            && inner.next_notes_at.is_some_and(|t| now_ms() >= t)
+            && inner.s.segments.len() > inner.notes_upto
+            && !inner.summarizing;
+    });
+    due
+}
+
+fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
+    std::thread::spawn(move || {
+        let mut queue: VecDeque<audio::Chunk> = VecDeque::new();
+        let mut finishing = false;
+        let mut assembler = stitch::Assembler::default();
+        // 上一段听写出来的字（去重叠、过滤重复用）
+        let mut last_text = String::new();
+        let mut next_id: u64 = 1;
+        let mut saved_at = 0usize;
+        let mut wait = 2u64;
+        loop {
+            // 收新的段：手上没活就最多等 1 秒（顺便看看半句话是不是等太久了）
+            let first = if queue.is_empty() && !finishing {
+                jobs.recv_timeout(Duration::from_secs(1))
+            } else {
+                jobs.try_recv().map_err(|e| match e {
+                    mpsc::TryRecvError::Empty => RecvTimeoutError::Timeout,
+                    mpsc::TryRecvError::Disconnected => RecvTimeoutError::Disconnected,
+                })
+            };
+            let mut incoming = match first {
+                Ok(job) => vec![job],
+                Err(RecvTimeoutError::Timeout) => Vec::new(),
+                Err(RecvTimeoutError::Disconnected) => {
+                    finishing = true;
+                    Vec::new()
+                }
+            };
+            while let Ok(job) = jobs.try_recv() {
+                incoming.push(job);
+            }
+            for job in incoming {
+                match job {
+                    Job::Chunk(chunk) => queue.push_back(chunk),
+                    Job::Finish => finishing = true,
+                }
+            }
+            let key = {
+                let inner = lock(&app.state::<Lecture>().inner().0);
+                if inner.generation != generation {
+                    return;
+                }
+                inner.key.clone()
+            };
+
+            if queue.is_empty() {
+                // 半句话等太久，或者下课了：不等了
+                if assembler.stale(now_ms()) || finishing {
+                    if let Some((at, en)) = assembler.flush() {
+                        update(&app, generation, |inner| inner.pending = None);
+                        let id = next_id;
+                        next_id += 1;
+                        if emit_sentence(&app, generation, &key, id, at, en) {
+                            spawn_summary(app.clone(), generation, false);
+                        }
+                    }
+                }
+                if finishing {
+                    break;
+                }
+                continue;
+            }
+
+            // 排着好几段（断网刚恢复）：合成一次送去听写，少发请求、追得快
+            let mut merged: Vec<f32> = queue[0].samples.clone();
+            let mut count = 1;
+            while count < queue.len()
+                && merged.len() + queue[count].samples.len() - queue[count].overlap
+                    <= MERGE_MAX_SAMPLES
+            {
+                merged.extend_from_slice(&queue[count].samples[queue[count].overlap..]);
+                count += 1;
+            }
+            let at = queue[0].at;
+            let overlap = queue[0].overlap > 0;
+            let quiet = queue.iter().take(count).any(|c| c.quiet);
+
+            let heard = match transcribe(&key, &audio::wav(&merged)) {
+                Ok((text, ms)) => {
+                    wait = 2;
+                    Some((text, ms))
+                }
+                Err(Fail::Skip(msg)) => {
+                    update(&app, generation, |inner| inner.error = Some(msg));
+                    None
+                }
+                Err(Fail::Later(msg)) => {
+                    // 送不出去：这几段先留着，隔一会儿再试，那时候可能又多攒了几段，一起送
+                    if !update(&app, generation, |inner| {
+                        inner.error = Some(msg);
+                        inner.retrying = true;
+                    }) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_secs(wait));
+                    wait = (wait * 2).min(30);
+                    continue;
+                }
+            };
+            queue.drain(..count);
+            let mut text = heard.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+            if overlap && !text.is_empty() {
+                text = stitch::dedupe(&last_text, &text);
+            }
+            let keep = !stitch::is_noise(&text, &last_text);
+            if keep {
+                last_text = text.clone();
+            }
+            let sentence = if keep {
+                assembler.push(&text, at, now_ms())
+            } else {
+                None
+            };
+            let pending = assembler.pending().map(|(at, en)| Pending { at, en });
+            let alive = update(&app, generation, |inner| {
+                if let Some((_, ms)) = &heard {
+                    inner.s.usage.asr_ms += ms;
+                }
+                inner.queued = inner.queued.saturating_sub(count);
+                inner.retrying = false;
+                inner.quiet = quiet;
+                if inner.error.as_deref().is_some_and(|e| {
+                    e.contains("连不上") || e.contains("余额") || e.contains("密钥")
+                }) {
+                    inner.error = None;
+                }
+                inner.pending = pending;
+            });
+            if !alive {
+                return;
+            }
+            if let Some((at, en)) = sentence {
+                let id = next_id;
+                next_id += 1;
+                if emit_sentence(&app, generation, &key, id, at, en) {
+                    spawn_summary(app.clone(), generation, false);
+                }
+            }
+            // 隔几句存一次，中途关掉软件也丢不了多少
+            let count = lock(&app.state::<Lecture>().inner().0).s.segments.len();
+            if count >= saved_at + 6 {
+                saved_at = count;
+                save_current(&app, generation);
+            }
+        }
+
+        // 下课：存一下，再完整整理
+        save_current(&app, generation);
+        let empty = lock(&app.state::<Lecture>().inner().0)
+            .s
+            .segments
+            .is_empty();
+        if empty {
+            update(&app, generation, |inner| {
+                inner.status = Status::Done;
+                inner.next_notes_at = None;
+                inner.error = Some("这节课没听到说话，没有可整理的".into());
+            });
+            crate::awake::lecture(false);
+        } else {
+            // 正在整理草稿的话等它回来再整理完整的
+            for _ in 0..240 {
+                if !lock(&app.state::<Lecture>().inner().0).summarizing {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            spawn_summary(app.clone(), generation, true);
         }
     });
 }
@@ -1009,6 +917,7 @@ pub fn lecture_start(
     course_id: Option<String>,
     key: String,
     utc_offset_min: Option<i32>,
+    denoise: Option<bool>,
 ) -> Result<(), String> {
     let key = key.trim().to_string();
     if key.is_empty() {
@@ -1052,7 +961,14 @@ pub fn lecture_start(
         spawn_worker(app.clone(), generation, rx);
         (generation, stop, paused, tx)
     };
-    if let Err(e) = spawn_recorder(app.clone(), generation, stop, paused, tx) {
+    if let Err(e) = spawn_recorder(
+        app.clone(),
+        generation,
+        stop,
+        paused,
+        denoise.unwrap_or(false),
+        tx,
+    ) {
         // 麦克风打不开：退回去，什么都没开始
         let mut inner = lock(&lecture.0);
         *inner = Inner {
@@ -1342,48 +1258,6 @@ pub fn lecture_open_platform() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn wav_header() {
-        let w = wav(&[0.0; 160]);
-        assert_eq!(&w[0..4], b"RIFF");
-        assert_eq!(w.len(), 44 + 320);
-    }
-
-    #[test]
-    fn cutter_cuts_after_pause() {
-        let mut cutter = Cutter::new(16_000);
-        let mut chunks = Vec::new();
-        let mut levels = 0;
-        // 5 秒"说话"（响的正弦），再 1 秒安静
-        let speech: Vec<f32> = (0..16_000 * 5)
-            .map(|i| (i as f32 * 0.05).sin() * 0.3)
-            .collect();
-        let quiet = vec![0.0f32; 16_000];
-        cutter.push(&quiet, &mut |_| levels += 1, &mut |at, buf| {
-            chunks.push((at, buf.len()))
-        });
-        cutter.push(&speech, &mut |_| levels += 1, &mut |at, buf| {
-            chunks.push((at, buf.len()))
-        });
-        cutter.push(&quiet, &mut |_| levels += 1, &mut |at, buf| {
-            chunks.push((at, buf.len()))
-        });
-        assert_eq!(levels, 70);
-        assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].1 >= 16_000 * 5);
-    }
-
-    #[test]
-    fn silence_is_never_sent() {
-        let mut cutter = Cutter::new(48_000);
-        let mut chunks = 0;
-        cutter.push(&vec![0.0f32; 48_000 * 20], &mut |_| {}, &mut |_, _| {
-            chunks += 1
-        });
-        cutter.cut(&mut |_, _| chunks += 1);
-        assert_eq!(chunks, 0);
-    }
 
     #[test]
     fn dates() {

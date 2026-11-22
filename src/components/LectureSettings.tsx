@@ -114,6 +114,13 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             onChange={(lectureAsk) => update({ lectureAsk })}
           />
         </Row>
+        <Row label={t("降噪：去掉空调、风扇这类一直响的声音")}>
+          <Toggle
+            label={t("降噪：去掉空调、风扇这类一直响的声音")}
+            on={s.lectureDenoise}
+            onChange={(lectureDenoise) => update({ lectureDenoise })}
+          />
+        </Row>
       </Group>
 
       <Group title={t("怎么申请 DeepSeek 密钥")}>

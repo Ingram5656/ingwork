@@ -720,6 +720,20 @@ html.is-hidden .bg__blob {
   position: relative;
 }
 
+/*
+ * 浮在页面上面的面板（设置、统计、确认框、侧边的待办）：
+ * 没有毛玻璃以后，半透明的底会透出后面页面上的字，所以这里的底色几乎不透明
+ */
+.overlay__panel > .glass.glass {
+  background:
+    radial-gradient(120% 90% at 18% -10%, rgba(255, 255, 255, 0.12), transparent 55%),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--c1) 20%, rgb(30, 20, 58)),
+      color-mix(in srgb, var(--c5) 26%, rgb(16, 10, 34))
+    );
+}
+
 /* 进场：从略大、略糊、透明落到位；退场：缩小一点淡出 */
 /* 动画加在玻璃面板自己身上，不加在外层：外层一有透明度或模糊，里面的玻璃就模糊不到背景了 */
 .overlay[data-state="in"] .overlay__panel > * {
@@ -5420,6 +5434,10 @@ html.is-island #root {
 
 .lec-foot__error {
   color: #ffd2dc;
+}
+
+.lec-foot__warn {
+  color: #ffe6b8;
 }
 
 .lec-dot {

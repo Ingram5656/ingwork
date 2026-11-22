@@ -141,6 +141,8 @@ export interface Settings {
   lectureKey: string;
   /** 上课时间到了，问一下要不要开始听课 */
   lectureAsk: boolean;
+  /** 听课时先降噪（去掉空调、风扇这类一直响的声音） */
+  lectureDenoise: boolean;
   /** 睡眠模式：雨量 0–100，0 是晴天 */
   sleepRain: number;
   /** 雨往哪边斜（度），-40 到 40 */
@@ -233,6 +235,7 @@ export const DEFAULT_SETTINGS: Settings = {
   islandHaptics: true,
   lectureKey: "",
   lectureAsk: true,
+  lectureDenoise: false,
   sleepRain: 45,
   sleepAngle: -8,
   sleepThunder: false,

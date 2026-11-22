@@ -80,6 +80,10 @@ export interface LectureState {
   notes: LectureNotes | null;
   /** 笔记上次整理的时刻 */
   notesAt: number | null;
+  /** 还没说完、等着凑成整句的半句话 */
+  pending: { at: number; en: string } | null;
+  /** 说话的声音太小 */
+  quiet: boolean;
   /** 用了多少：听写时长（毫秒）、命中缓存 / 没命中的输入字数、输出字数 */
   usage: LectureUsage;
   /** 下一次整理大约在什么时候（听课中才有） */
@@ -113,6 +117,8 @@ const EMPTY: LectureState = {
   notes: null,
   notesAt: null,
   usage: { asrMs: 0, hit: 0, miss: 0, out: 0 },
+  pending: null,
+  quiet: false,
   nextNotesAt: null,
   summarizing: false,
   error: null,
@@ -200,6 +206,7 @@ export const lecture = {
       key: getSettings().lectureKey,
       // 按这台电脑的时区给模型看日期和时刻
       utcOffsetMin: -new Date().getTimezoneOffset(),
+      denoise: getSettings().lectureDenoise,
     }).then(
       () => null,
       (e) => String(e),

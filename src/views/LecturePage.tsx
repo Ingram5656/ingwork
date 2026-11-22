@@ -179,7 +179,7 @@ function Live({ s }: { s: LectureState }) {
   useLayoutEffect(() => {
     const el = listRef.current;
     if (el && follow) el.scrollTop = el.scrollHeight;
-  }, [s.segments, follow]);
+  }, [s.segments, s.pending, follow]);
 
   const onScroll = () => {
     const el = listRef.current;
@@ -234,11 +234,11 @@ function Live({ s }: { s: LectureState }) {
       {s.status === "listening" || s.status === "paused" ? <LevelBand quiet={!listening} /> : null}
 
       <ol className="lec-stream" ref={listRef} onScroll={onScroll} aria-live="polite">
-        {s.segments.length === 0 ? (
+        {s.segments.length === 0 && !s.pending ? (
           <li className="lec-stream__empty">{listening ? t("在听了。老师开口以后，几秒钟内第一段就会出来。") : null}</li>
         ) : null}
         {s.segments.map((seg, i) => {
-          const last = i === s.segments.length - 1;
+          const last = i === s.segments.length - 1 && !s.pending;
           return (
             <li key={seg.id} className={last && listening ? "lec-seg is-latest" : "lec-seg"}>
               <time className="lec-seg__time">{clock(seg.at)}</time>
@@ -257,6 +257,17 @@ function Live({ s }: { s: LectureState }) {
             </li>
           );
         })}
+        {s.pending ? (
+          <li className={listening ? "lec-seg is-latest" : "lec-seg"}>
+            <time className="lec-seg__time">{clock(s.pending.at)}</time>
+            <div className="lec-seg__body">
+              <p className="lec-seg__en" lang="en">
+                {s.pending.en}
+              </p>
+              <p className="lec-seg__zh is-pending">{t("等这句说完再翻译")}</p>
+            </div>
+          </li>
+        ) : null}
       </ol>
 
       {!follow ? (
@@ -280,6 +291,7 @@ function Live({ s }: { s: LectureState }) {
             {t("正在听")}
           </span>
         ) : null}
+        {s.quiet ? <span className="lec-foot__warn">{t("声音有点小，坐近一点或者换个麦克风")}</span> : null}
         {s.backlog > 0 ? <span>{t("有 {n} 段还没送出去，网好了会自动补上", { n: s.backlog })}</span> : null}
         {s.error ? <span className="lec-foot__error">{tMsg(s.error)}</span> : null}
       </footer>
