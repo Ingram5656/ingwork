@@ -15,6 +15,9 @@ import {
   lecture,
   onJump,
   listenedNow,
+  playSegment,
+  stopClip,
+  usePlaying,
   notesMarkdown,
   useLecture,
   useLectureHistory,
@@ -179,6 +182,11 @@ function LevelBand({ quiet }: { quiet: boolean }) {
 
 function Live({ s }: { s: LectureState }) {
   const now = useNow();
+  const playing = usePlaying();
+  // 听课时不放：喇叭的声音会被麦克风录进去
+  const canPlay = s.audioHere && s.status === "done";
+  const [playError, setPlayError] = useState("");
+  useEffect(() => stopClip, []);
   const listRef = useRef<HTMLOListElement>(null);
   const [follow, setFollow] = useState(true);
 
@@ -281,7 +289,24 @@ function Live({ s }: { s: LectureState }) {
                 .filter(Boolean)
                 .join(" ")}
             >
-              <time className="lec-seg__time">{clock(seg.at)}</time>
+              {canPlay ? (
+                <button
+                  type="button"
+                  className={playing === seg.id ? "lec-seg__time lec-play is-on" : "lec-seg__time lec-play"}
+                  aria-label={playing === seg.id ? t("停") : t("听这一句原声")}
+                  onClick={() => {
+                    setPlayError("");
+                    playSegment(s, i).catch((e: unknown) => setPlayError(tMsg(String(e))));
+                  }}
+                >
+                  <span className="lec-play__time">{clock(seg.at)}</span>
+                  <span className="lec-play__icon" aria-hidden="true">
+                    {playing === seg.id ? "■" : "▶"}
+                  </span>
+                </button>
+              ) : (
+                <time className="lec-seg__time">{clock(seg.at)}</time>
+              )}
               <div className="lec-seg__body">
                 <p className="lec-seg__en" lang="en">
                   {seg.en}
@@ -334,6 +359,7 @@ function Live({ s }: { s: LectureState }) {
         {s.quiet ? <span className="lec-foot__warn">{t("声音有点小，坐近一点或者换个麦克风")}</span> : null}
         {s.backlog > 0 ? <span>{t("有 {n} 段还没送出去，网好了会自动补上", { n: s.backlog })}</span> : null}
         {s.error ? <span className="lec-foot__error">{tMsg(s.error)}</span> : null}
+        {playError ? <span className="lec-foot__error">{playError}</span> : null}
       </footer>
     </>
   );
@@ -343,10 +369,12 @@ function Live({ s }: { s: LectureState }) {
 
 function Notes({ s }: { s: LectureState }) {
   const [copied, setCopied] = useState(false);
+  const [redoError, setRedoError] = useState("");
   const active = s.status !== "idle";
 
   let status = "";
-  if (s.summarizing) status = s.status === "finishing" ? t("正在从头整理整节课…") : t("正在更新提纲…");
+  if (s.redo !== null) status = t("正在用录音重新听写 {n}%", { n: s.redo });
+  else if (s.summarizing) status = s.status === "finishing" ? t("正在从头整理整节课…") : t("正在更新提纲…");
   else if (s.status === "done" && s.notesAt) status = t("{time} 整理好", { time: clock(s.notesAt) });
   else if (s.notesAt && s.nextNotesAt) {
     status = t("{time} 更新过，下一次大约 {next}", { time: clock(s.notesAt), next: clock(s.nextNotesAt) });
@@ -364,7 +392,9 @@ function Notes({ s }: { s: LectureState }) {
       <header className="lec-nhead">
         <h2 className="lec-nhead__title">{active ? t("笔记") : t("以前的笔记")}</h2>
         {status ? (
-          <p className={s.summarizing ? "lec-nhead__status is-busy" : "lec-nhead__status"}>{status}</p>
+          <p className={s.summarizing || s.redo !== null ? "lec-nhead__status is-busy" : "lec-nhead__status"}>
+            {status}
+          </p>
         ) : null}
         {s.status === "done" && s.notes && s.id ? (
           <div className="lec-nhead__actions">
@@ -374,9 +404,24 @@ function Notes({ s }: { s: LectureState }) {
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => void lecture.exportMarkdown(s)}>
               {t("导出")}
             </button>
+            {s.audioHere ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                disabled={s.redo !== null || s.summarizing}
+                title={t("用这节课的录音按更长的段重新听写、翻译、整理，比边听边写的准")}
+                onClick={() => {
+                  setRedoError("");
+                  void lecture.redo().then((err) => err && setRedoError(tMsg(err)));
+                }}
+              >
+                {t("用录音重新整理")}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </header>
+      {redoError ? <p className="row__error lec-nhead__error">{redoError}</p> : null}
       <div className="lec-paper">
         {!active ? <History /> : null}
         {active && s.notes ? <NotesBody s={s} notes={s.notes} draft={s.status !== "done"} /> : null}

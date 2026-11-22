@@ -125,6 +125,34 @@ fn last_sentence_end(text: &str) -> Option<usize> {
     None
 }
 
+/// 把一大段拆成一句一句；太短的句子（比如 "Okay."）并到下一句里
+pub fn split(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = text.trim();
+    while !rest.is_empty() {
+        // 找第一个句子结尾
+        let end = (1..=rest.len())
+            .filter(|&i| rest.is_char_boundary(i))
+            .find(|&i| {
+                last_sentence_end(&rest[..i]) == Some(i)
+                    && (i == rest.len() || rest[i..].starts_with(char::is_whitespace))
+            });
+        let (one, next) = match end {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, ""),
+        };
+        match out.last_mut() {
+            Some(last) if last.split_whitespace().count() < 6 => {
+                last.push(' ');
+                last.push_str(one.trim());
+            }
+            _ => out.push(one.trim().to_string()),
+        }
+        rest = next.trim_start();
+    }
+    out
+}
+
 /// 把听写一段段拼成整句
 #[derive(Default)]
 pub struct Assembler {
@@ -261,6 +289,20 @@ mod tests {
             Some((20_000, "Done.".into()))
         );
         assert_eq!(a.pending(), None);
+    }
+
+    #[test]
+    fn splits_sentences() {
+        assert_eq!(
+            split("Okay. So today we look at CT. The scanner rotates around the patient! Dr. Smith built it."),
+            vec![
+                "Okay. So today we look at CT.",
+                "The scanner rotates around the patient!",
+                "Dr. Smith built it.",
+            ]
+        );
+        assert_eq!(split("no ending here"), vec!["no ending here"]);
+        assert!(split("   ").is_empty());
     }
 
     #[test]

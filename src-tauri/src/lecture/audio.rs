@@ -23,14 +23,35 @@ const fn frames(ms: usize) -> usize {
 }
 /// 开始说话前留多少
 const PREROLL: usize = frames(300);
-/// 短于这个的段不切（4 秒）
-const MIN_LEN: usize = frames(4_000);
-/// 停顿多久算一句说完
-const PAUSE: usize = frames(500);
-/// 一直不停最多攒多久
-const MAX_LEN: usize = frames(15_000);
-/// 硬切时往回找停顿的范围
-const SEARCH: usize = frames(3_000);
+
+/// 多长切一段
+#[derive(Clone, Copy)]
+pub struct Limits {
+    /// 短于这个的段不切
+    min_len: usize,
+    /// 停顿多久算一句说完
+    pause: usize,
+    /// 一直不停最多攒多久
+    max_len: usize,
+    /// 硬切时往回找停顿的范围
+    search: usize,
+}
+
+/// 边听边翻：段短一点，出字快
+pub const LIVE: Limits = Limits {
+    min_len: frames(4_000),
+    pause: frames(500),
+    max_len: frames(15_000),
+    search: frames(3_000),
+};
+
+/// 课后用录音重新听写：段长一点，听写的上下文多、更准
+pub const REDO: Limits = Limits {
+    min_len: frames(20_000),
+    pause: frames(600),
+    max_len: frames(60_000),
+    search: frames(10_000),
+};
 /// 硬切时下一段带上的重叠（采样数，约 1 秒，正好是整数个 16 毫秒）
 pub const OVERLAP: usize = 63 * VAD_FRAME;
 /// 说话少于这个的段不送（0.4 秒）
@@ -209,6 +230,7 @@ pub struct Chunk {
 
 pub struct Cutter {
     vad: Box<dyn Vad>,
+    limits: Limits,
     frame: Vec<f32>,
     level_sum: f32,
     level_n: usize,
@@ -228,8 +250,13 @@ pub struct Cutter {
 
 impl Cutter {
     pub fn new(vad: Box<dyn Vad>) -> Self {
+        Self::with_limits(vad, LIVE)
+    }
+
+    pub fn with_limits(vad: Box<dyn Vad>, limits: Limits) -> Self {
         Self {
             vad,
+            limits,
             frame: Vec::with_capacity(VAD_FRAME),
             level_sum: 0.0,
             level_n: 0,
@@ -306,9 +333,9 @@ impl Cutter {
             return;
         }
         let len = self.scores.len();
-        if self.speech > 0 && len >= MIN_LEN && self.silence >= PAUSE {
+        if self.speech > 0 && len >= self.limits.min_len && self.silence >= self.limits.pause {
             self.cut(on_chunk);
-        } else if len >= MAX_LEN {
+        } else if len >= self.limits.max_len {
             self.cut_hard(on_chunk);
         }
     }
@@ -343,7 +370,7 @@ impl Cutter {
     /// 一直没停：在最近 3 秒里分数最低（最像停顿）的地方切，下一段带上 1 秒重叠
     fn cut_hard(&mut self, on_chunk: &mut impl FnMut(Chunk)) {
         let len = self.scores.len();
-        let from = len.saturating_sub(SEARCH).max(len / 2);
+        let from = len.saturating_sub(self.limits.search).max(len / 2);
         let mut at = len;
         let mut lowest = f32::MAX;
         for i in from..len {

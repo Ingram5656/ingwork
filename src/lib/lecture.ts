@@ -110,6 +110,10 @@ export interface LectureState {
   pending: { at: number; en: string } | null;
   /** 说话的声音太小 */
   quiet: boolean;
+  /** 这台电脑上有这节课的录音（能回放、能用录音重新整理） */
+  audioHere: boolean;
+  /** 正在用录音重新整理：进度 0～100 */
+  redo: number | null;
   /** 用了多少：听写时长（毫秒）、命中缓存 / 没命中的输入字数、输出字数 */
   usage: LectureUsage;
   /** 下一次整理大约在什么时候（听课中才有） */
@@ -145,6 +149,8 @@ const EMPTY: LectureState = {
   usage: { asrMs: 0, hit: 0, miss: 0, out: 0 },
   pending: null,
   quiet: false,
+  audioHere: false,
+  redo: null,
   nextNotesAt: null,
   summarizing: false,
   error: null,
@@ -235,6 +241,7 @@ export const lecture = {
       denoise: getSettings().lectureDenoise,
       // 生词本里的词也算进这门课的术语表（拼写以它为准）
       words: getPlanner().words.map((w) => w.word),
+      saveAudio: getSettings().lectureSaveAudio,
     }).then(
       () => null,
       (e) => String(e),
@@ -247,6 +254,12 @@ export const lecture = {
   close: () => call("lecture_close"),
   /** 重新整理一遍（整理失败、或者想再来一次） */
   summarize: () => call("lecture_summarize", { key: getSettings().lectureKey }),
+  /** 下课后用录音重新整理一遍。不行的话返回中文说明 */
+  redo: () =>
+    invoke("lecture_redo", { key: getSettings().lectureKey }).then(
+      () => null,
+      (e) => String(e),
+    ),
   /** 打开以前的一份笔记 */
   open: (id: string) => call("lecture_open", { id }),
   remove: (id: string) => call("lecture_remove", { id }),
@@ -398,4 +411,56 @@ export function dueDate(due: LectureDue, s: LectureState, courses: Course[]): st
     if (hit) return ymd(day);
   }
   return null;
+}
+
+// ---------- 回放原声 ----------
+
+let player: HTMLAudioElement | null = null;
+let playerUrl = "";
+let playing: number | null = null;
+const playListeners = new Set<() => void>();
+
+function setPlaying(id: number | null) {
+  playing = id;
+  playListeners.forEach((fn) => fn());
+}
+
+export function usePlaying(): number | null {
+  return useSyncExternalStore(
+    (fn) => {
+      playListeners.add(fn);
+      return () => playListeners.delete(fn);
+    },
+    () => playing,
+  );
+}
+
+export function stopClip(): void {
+  player?.pause();
+  player = null;
+  if (playerUrl) URL.revokeObjectURL(playerUrl);
+  playerUrl = "";
+  setPlaying(null);
+}
+
+/** 放第 index 句的原声（到下一句开始，最多 30 秒）。再点一次停 */
+export async function playSegment(s: LectureState, index: number): Promise<void> {
+  const seg = s.segments[index];
+  if (!seg || !s.id) return;
+  if (playing === seg.id) {
+    stopClip();
+    return;
+  }
+  stopClip();
+  const next = s.segments[index + 1];
+  const buf = await invoke<ArrayBuffer>("lecture_clip", {
+    id: s.id,
+    from: seg.at,
+    to: next ? next.at : seg.at + 15_000,
+  });
+  playerUrl = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  player = new Audio(playerUrl);
+  player.onended = stopClip;
+  setPlaying(seg.id);
+  await player.play();
 }

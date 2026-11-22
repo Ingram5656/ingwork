@@ -143,6 +143,8 @@ export interface Settings {
   lectureAsk: boolean;
   /** 听课时先降噪（去掉空调、风扇这类一直响的声音） */
   lectureDenoise: boolean;
+  /** 听课时把录音存在这台电脑上（能回放、课后能用录音重新整理） */
+  lectureSaveAudio: boolean;
   /** 睡眠模式：雨量 0–100，0 是晴天 */
   sleepRain: number;
   /** 雨往哪边斜（度），-40 到 40 */
@@ -236,6 +238,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lectureKey: "",
   lectureAsk: true,
   lectureDenoise: false,
+  lectureSaveAudio: false,
   sleepRain: 45,
   sleepAngle: -8,
   sleepThunder: false,

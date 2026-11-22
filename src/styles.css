@@ -5428,6 +5428,39 @@ html.is-island #root {
   color: rgba(255, 255, 255, 0.45);
 }
 
+/* 存了录音时，时刻那一格可以点：听这一句原声 */
+.lec-play {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  height: fit-content;
+  margin: -2px 0 0 -6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.lec-play__icon {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  transition: color 0.2s ease;
+}
+
+.lec-play:hover,
+.lec-play:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.lec-play:hover .lec-play__icon,
+.lec-play:focus-visible .lec-play__icon,
+.lec-play.is-on .lec-play__icon {
+  color: #ff9ac0;
+}
+
 .lec-seg__body {
   max-width: 46em;
 }
@@ -5575,6 +5608,10 @@ html.is-island #root {
   display: flex;
   gap: 8px;
   margin-left: auto;
+}
+
+.lec-nhead__error {
+  margin: -4px 30px 8px;
 }
 
 /* 笔记的纸面：比面板亮一点，像夹在玻璃后面的一页 */

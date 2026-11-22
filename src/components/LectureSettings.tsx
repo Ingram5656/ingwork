@@ -121,6 +121,13 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             onChange={(lectureDenoise) => update({ lectureDenoise })}
           />
         </Row>
+        <Row label={t("保存录音，只存在这台电脑上")}>
+          <Toggle
+            label={t("保存录音，只存在这台电脑上")}
+            on={s.lectureSaveAudio}
+            onChange={(lectureSaveAudio) => update({ lectureSaveAudio })}
+          />
+        </Row>
       </Group>
 
       <Group title={t("怎么申请 DeepSeek 密钥")}>

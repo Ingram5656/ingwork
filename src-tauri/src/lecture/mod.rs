@@ -16,6 +16,8 @@ mod audio;
 pub mod course;
 mod glossary;
 mod notes;
+mod record;
+mod redo;
 mod stitch;
 
 use glossary::Glossary;
@@ -91,6 +93,8 @@ pub struct Session {
     utc_offset_min: i32,
     /// 用了多少：听写时长、字数，用来估算花费
     usage: Usage,
+    /// 存了录音的话：每次开始、继续的时刻对应录音里第几个样本（录音文件只在录的那台电脑上）
+    audio_marks: Vec<record::Mark>,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
@@ -132,6 +136,10 @@ struct View<'a> {
     pending: Option<Pending>,
     /// 说话的声音太小
     quiet: bool,
+    /// 这台电脑上有这节课的录音（能回放、能用录音重新整理）
+    audio_here: bool,
+    /// 正在用录音重新整理：进度 0～100
+    redo: Option<u8>,
 }
 
 #[derive(Clone, Serialize)]
@@ -181,6 +189,8 @@ struct Inner {
     glossary: Arc<Glossary>,
     /// 生词本里的词（重新拼术语表时用）
     words: Vec<String>,
+    audio_here: bool,
+    redo: Option<u8>,
     stop: Option<Arc<AtomicBool>>,
     paused: Arc<AtomicBool>,
 }
@@ -203,6 +213,8 @@ impl Default for Inner {
             quiet: false,
             glossary: Arc::new(Glossary::default()),
             words: Vec::new(),
+            audio_here: false,
+            redo: None,
             stop: None,
             paused: Arc::new(AtomicBool::new(false)),
         }
@@ -223,6 +235,8 @@ fn view(inner: &Inner) -> serde_json::Value {
         error: inner.error.clone(),
         pending: inner.pending.clone(),
         quiet: inner.quiet && inner.status == Status::Listening,
+        audio_here: inner.audio_here,
+        redo: inner.redo,
     })
     .unwrap_or(serde_json::Value::Null)
 }
@@ -285,6 +299,23 @@ fn safe_id(id: &str) -> Result<&str, String> {
     }
 }
 
+/// 录音存在哪：这台电脑的应用数据文件夹，不放进同步的文件夹（太大）
+fn audio_path(app: &AppHandle, id: &str) -> PathBuf {
+    app.path()
+        .app_local_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("lecture-audio")
+        .join(format!("{id}.wav"))
+}
+
+/// 正在听、正在收尾、正在用录音重新整理：这时候不能换课、删课
+fn busy(inner: &Inner) -> bool {
+    matches!(
+        inner.status,
+        Status::Listening | Status::Paused | Status::Finishing
+    ) || inner.redo.is_some()
+}
+
 // ---------- 录音 ----------
 
 /// 录音线程：开麦克风，处理成 16 kHz、切段交给处理线程，下课时把最后一段和"下课了"交过去
@@ -294,6 +325,7 @@ fn spawn_recorder(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     denoise: bool,
+    audio_file: Option<PathBuf>,
     jobs: Sender<Job>,
 ) -> Result<(), String> {
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
@@ -310,6 +342,18 @@ fn spawn_recorder(
         };
         crate::logger::info(&format!("lecture microphone: {rate} Hz, denoise {denoise}"));
         let mut pipeline = audio::Pipeline::new(rate, denoise);
+        // 要存录音的话边录边写；暂停后继续时记一个标记（时刻 → 录音里第几个样本）
+        let mut writer = audio_file.and_then(|path| match record::Writer::create(&path) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                crate::logger::error(&format!("lecture audio file: {e}"));
+                None
+            }
+        });
+        if writer.is_some() {
+            update(&app, generation, |inner| inner.audio_here = true);
+        }
+        let mut need_mark = true;
         let mut cutter = audio::Cutter::new(audio::detector());
         let mut out = Vec::new();
         let mut was_paused = false;
@@ -332,6 +376,7 @@ fn spawn_recorder(
             if is_paused && !was_paused {
                 // 刚暂停：把攒着的这一段先切出去
                 cutter.cut(&mut send_chunk);
+                need_mark = true;
             }
             was_paused = is_paused;
             match samples.recv_timeout(Duration::from_millis(100)) {
@@ -345,7 +390,24 @@ fn spawn_recorder(
                     } else {
                         out.clear();
                         pipeline.push(&block, &mut out);
-                        cutter.push(&out, now_ms(), &mut on_level, &mut send_chunk);
+                        let now = now_ms();
+                        if let Some(w) = writer.as_mut() {
+                            if need_mark && !out.is_empty() {
+                                need_mark = false;
+                                let mark = record::Mark {
+                                    at: now.saturating_sub(
+                                        out.len() as u64 * 1000 / audio::RATE as u64,
+                                    ),
+                                    sample: w.samples,
+                                };
+                                update(&app, generation, |inner| inner.s.audio_marks.push(mark));
+                            }
+                            if let Err(e) = w.push(&out) {
+                                crate::logger::error(&format!("lecture audio write: {e}"));
+                                writer = None;
+                            }
+                        }
+                        cutter.push(&out, now, &mut on_level, &mut send_chunk);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -353,6 +415,11 @@ fn spawn_recorder(
             }
         }
         drop(stream);
+        if let Some(w) = writer {
+            if let Err(e) = w.finish() {
+                crate::logger::error(&format!("lecture audio finish: {e}"));
+            }
+        }
         let _ = jobs.send(Job::Finish);
     });
     ready_rx
@@ -887,6 +954,7 @@ pub fn lecture_start(
     utc_offset_min: Option<i32>,
     denoise: Option<bool>,
     words: Option<Vec<String>>,
+    save_audio: Option<bool>,
 ) -> Result<(), String> {
     let key = key.trim().to_string();
     if key.is_empty() {
@@ -904,16 +972,16 @@ pub fn lecture_start(
         course_id.as_deref(),
         &words,
     ));
-    let (generation, stop, paused, tx) = {
+    let (generation, stop, paused, tx, audio_file) = {
         let mut inner = lock(&lecture.0);
-        if matches!(
-            inner.status,
-            Status::Listening | Status::Paused | Status::Finishing
-        ) {
+        if busy(&inner) {
             return Err("正在听一节课，先结束它".into());
         }
         let generation = inner.generation + 1;
         let now = now_ms();
+        let audio_file = save_audio
+            .unwrap_or(false)
+            .then(|| audio_path(&app, &format!("{now}")));
         let stop = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
         *inner = Inner {
@@ -938,7 +1006,7 @@ pub fn lecture_start(
         };
         let (tx, rx) = mpsc::channel::<Job>();
         spawn_worker(app.clone(), generation, rx);
-        (generation, stop, paused, tx)
+        (generation, stop, paused, tx, audio_file)
     };
     if let Err(e) = spawn_recorder(
         app.clone(),
@@ -946,6 +1014,7 @@ pub fn lecture_start(
         stop,
         paused,
         denoise.unwrap_or(false),
+        audio_file,
         tx,
     ) {
         // 麦克风打不开：退回去，什么都没开始
@@ -1024,10 +1093,7 @@ pub fn lecture_stop(app: AppHandle, lecture: State<Lecture>) {
 pub fn lecture_close(app: AppHandle, lecture: State<Lecture>) {
     {
         let mut inner = lock(&lecture.0);
-        if matches!(
-            inner.status,
-            Status::Listening | Status::Paused | Status::Finishing
-        ) {
+        if busy(&inner) {
             return;
         }
         let generation = inner.generation + 1;
@@ -1044,7 +1110,7 @@ pub fn lecture_close(app: AppHandle, lecture: State<Lecture>) {
 pub fn lecture_summarize(app: AppHandle, lecture: State<Lecture>, key: String) {
     let generation = {
         let mut inner = lock(&lecture.0);
-        if inner.status != Status::Done || inner.s.segments.is_empty() {
+        if inner.status != Status::Done || inner.s.segments.is_empty() || inner.redo.is_some() {
             return;
         }
         if !key.trim().is_empty() {
@@ -1075,19 +1141,18 @@ pub fn lecture_open(app: AppHandle, lecture: State<Lecture>, id: String) -> Resu
         serde_json::from_str(&text).map_err(|_| "这份笔记读不懂，文件可能坏了".to_string())?;
     {
         let mut inner = lock(&lecture.0);
-        if matches!(
-            inner.status,
-            Status::Listening | Status::Paused | Status::Finishing
-        ) {
+        if busy(&inner) {
             return Err("正在听一节课，先结束它再看以前的".into());
         }
         let generation = inner.generation + 1;
         let key = inner.key.clone();
+        let audio_here = !session.audio_marks.is_empty() && audio_path(&app, id).exists();
         *inner = Inner {
             status: Status::Done,
             s: session,
             key,
             generation,
+            audio_here,
             ..Inner::default()
         };
     }
@@ -1101,10 +1166,7 @@ pub fn lecture_remove(app: AppHandle, lecture: State<Lecture>, id: String) -> Re
     {
         let mut inner = lock(&lecture.0);
         if inner.s.id.as_deref() == Some(id.as_str()) {
-            if matches!(
-                inner.status,
-                Status::Listening | Status::Paused | Status::Finishing
-            ) {
+            if busy(&inner) {
                 return Err("正在听这节课，先结束它".into());
             }
             let generation = inner.generation + 1;
@@ -1115,6 +1177,8 @@ pub fn lecture_remove(app: AppHandle, lecture: State<Lecture>, id: String) -> Re
         }
     }
     let _ = std::fs::remove_file(folder(&app).join(format!("{id}.json")));
+    // 录音也一起删
+    let _ = std::fs::remove_file(audio_path(&app, &id));
     publish(&app);
     Ok(())
 }
@@ -1232,6 +1296,68 @@ pub fn lecture_open_platform() -> Result<(), String> {
     result
         .map(|_| ())
         .map_err(|_| "没能打开浏览器，请自己打开 platform.deepseek.com".to_string())
+}
+
+/// 下课后用录音重新整理一遍（只在录了音的那台电脑上能用）
+#[tauri::command]
+pub fn lecture_redo(app: AppHandle, lecture: State<Lecture>, key: String) -> Result<(), String> {
+    let generation = {
+        let mut inner = lock(&lecture.0);
+        if inner.status != Status::Done || busy(&inner) || inner.summarizing {
+            return Err("现在不能重新整理，等手上这件事做完".into());
+        }
+        if !inner.audio_here {
+            return Err("这台电脑上没有这节课的录音".into());
+        }
+        if !key.trim().is_empty() {
+            inner.key = key.trim().to_string();
+        }
+        inner.redo = Some(0);
+        inner.error = None;
+        inner.generation
+    };
+    publish(&app);
+    redo::spawn(app, generation);
+    Ok(())
+}
+
+/// 回放一句原声：给出这一段的 WAV（最多 30 秒）
+#[tauri::command(async)]
+pub fn lecture_clip(
+    app: AppHandle,
+    lecture: State<'_, Lecture>,
+    id: String,
+    from: u64,
+    to: u64,
+) -> Result<tauri::ipc::Response, String> {
+    let id = safe_id(&id)?.to_string();
+    let marks = {
+        let inner = lock(&lecture.0);
+        if inner.s.id.as_deref() == Some(id.as_str()) {
+            inner.s.audio_marks.clone()
+        } else {
+            std::fs::read_to_string(folder(&app).join(format!("{id}.json")))
+                .ok()
+                .and_then(|t| serde_json::from_str::<Session>(&t).ok())
+                .map(|s| s.audio_marks)
+                .unwrap_or_default()
+        }
+    };
+    let path = audio_path(&app, &id);
+    let total = record::length(&path).ok_or_else(|| "这台电脑上没有这节课的录音".to_string())?;
+    // 往前多放 0.3 秒，免得第一个字被切掉
+    let start = record::sample_at(&marks, from.saturating_sub(300))
+        .ok_or_else(|| "这一句没有录音".to_string())?;
+    let end = record::sample_at(&marks, to)
+        .unwrap_or(start)
+        .clamp(start + 8_000, start + 30 * audio::RATE as u64)
+        .min(total);
+    if start >= end {
+        return Err("这一句没有录音".into());
+    }
+    let samples =
+        record::read(&path, start, end).map_err(|_| "录音读不出来，文件可能坏了".to_string())?;
+    Ok(tauri::ipc::Response::new(audio::wav(&samples)))
 }
 
 #[cfg(test)]
