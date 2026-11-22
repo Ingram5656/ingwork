@@ -536,11 +536,23 @@ export class RainGlass implements Glass {
     // 退出睡眠模式就把显卡上的东西和这些大画布都还回去，不等垃圾回收
     for (const t of this.tex) this.g.deleteTexture(t);
     this.tex = [];
-    this.g.getExtension("WEBGL_lose_context")?.loseContext();
-    for (const c of [this.map, this.beads, this.trail, this.wipe, ...this.small, this.cv, this.streakCv]) {
+    // 自己建的离屏画布马上清空
+    for (const c of [this.map, this.beads, this.trail, this.wipe, ...this.small]) {
       c.width = 0;
       c.height = 0;
     }
+    // 页面上的两块画布：等它们真的从页面上拿掉（关掉睡眠模式）再把显卡上下文还回去。
+    // 同一块画布还在页面上的话（比如重新建一次雨景），丢掉上下文以后就再也画不出来，整窗一片白
+    const g = this.g;
+    const visible = [this.cv, this.streakCv];
+    window.setTimeout(() => {
+      if (visible.some((c) => c.isConnected)) return;
+      g.getExtension("WEBGL_lose_context")?.loseContext();
+      for (const c of visible) {
+        c.width = 0;
+        c.height = 0;
+      }
+    }, 0);
     this.clear = this.storm = this.fogA = this.fogB = null;
     this.video = null;
   }

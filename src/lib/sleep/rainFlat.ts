@@ -116,10 +116,15 @@ export class RainGlassFlat implements Glass {
 
   dispose() {
     this.stop();
-    for (const c of [this.mist, this.cv]) {
-      c.width = 0;
-      c.height = 0;
-    }
+    this.mist.width = 0;
+    this.mist.height = 0;
+    // 页面上的画布等它真的被拿掉再清空，免得同一块画布重新建雨景时是空的
+    const cv = this.cv;
+    window.setTimeout(() => {
+      if (cv.isConnected) return;
+      cv.width = 0;
+      cv.height = 0;
+    }, 0);
     this.clear = this.storm = null;
   }
 
