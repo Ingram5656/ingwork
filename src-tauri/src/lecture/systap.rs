@@ -25,7 +25,7 @@ use objc2_core_audio::{
 use objc2_core_foundation::{
     kCFAllocatorDefault, kCFTypeArrayCallBacks, kCFTypeDictionaryKeyCallBacks,
     kCFTypeDictionaryValueCallBacks, CFArray, CFDictionary, CFMutableDictionary, CFRetained,
-    CFString, CFStringCreateWithCString,
+    CFString,
 };
 use objc2_foundation::{ns_string, NSArray, NSNumber, NSString};
 use std::ffi::{c_void, CStr};
@@ -160,7 +160,8 @@ impl SystemTap {
 }
 
 fn to_cfstring(cstr: &'static CStr) -> CFRetained<CFString> {
-    unsafe { CFStringCreateWithCString(kCFAllocatorDefault, cstr.as_ptr(), 0x0800_0100) }.unwrap()
+    // 这些键都是 ASCII
+    CFString::from_str(cstr.to_str().unwrap_or_default())
 }
 
 /// 和 cpal 的 create_audio_aggregate_device_properties 一样，只换了名字和 UID
