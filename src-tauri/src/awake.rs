@@ -1,4 +1,4 @@
-//! Mac：计时进行中时，告诉系统别让 ingwork "打盹"（App Nap）。
+//! Mac：计时进行中、听课时，告诉系统别让 ingwork "打盹"（App Nap）。
 //!
 //! 窗口都看不见时（主窗口收进菜单栏），macOS 会把这个软件的定时器拖慢，好几秒才醒一次，
 //! 番茄钟和提醒就会晚。计时开始时登记一项"用户发起的活动"，系统就不会再拖慢它；
@@ -51,10 +51,29 @@ mod mac {
     }
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 计时在走
+static TIMER: AtomicBool = AtomicBool::new(false);
+/// 在听课（录音、送去识别不能被拖慢）
+static LECTURE: AtomicBool = AtomicBool::new(false);
+
+fn apply() {
+    let on = TIMER.load(Ordering::SeqCst) || LECTURE.load(Ordering::SeqCst);
+    #[cfg(target_os = "macos")]
+    mac::keep(on);
+    #[cfg(not(target_os = "macos"))]
+    let _ = on;
+}
+
 /// 计时在走：别让系统拖慢 ingwork；停了：恢复平常。重复调用没关系
 pub fn keep(running: bool) {
-    #[cfg(target_os = "macos")]
-    mac::keep(running);
-    #[cfg(not(target_os = "macos"))]
-    let _ = running;
+    TIMER.store(running, Ordering::SeqCst);
+    apply();
+}
+
+/// 听课开始、结束
+pub fn lecture(on: bool) {
+    LECTURE.store(on, Ordering::SeqCst);
+    apply();
 }

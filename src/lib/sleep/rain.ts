@@ -533,6 +533,16 @@ export class RainGlass implements Glass {
     this.stop();
     this.cv.removeEventListener("webglcontextlost", this.onLost);
     this.cv.removeEventListener("webglcontextrestored", this.onRestored);
+    // 退出睡眠模式就把显卡上的东西和这些大画布都还回去，不等垃圾回收
+    for (const t of this.tex) this.g.deleteTexture(t);
+    this.tex = [];
+    this.g.getExtension("WEBGL_lose_context")?.loseContext();
+    for (const c of [this.map, this.beads, this.trail, this.wipe, ...this.small, this.cv, this.streakCv]) {
+      c.width = 0;
+      c.height = 0;
+    }
+    this.clear = this.storm = this.fogA = this.fogB = null;
+    this.video = null;
   }
 
   // ---------------------------------------------------------------- 模拟

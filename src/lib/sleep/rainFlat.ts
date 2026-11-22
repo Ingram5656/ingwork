@@ -116,6 +116,11 @@ export class RainGlassFlat implements Glass {
 
   dispose() {
     this.stop();
+    for (const c of [this.mist, this.cv]) {
+      c.width = 0;
+      c.height = 0;
+    }
+    this.clear = this.storm = null;
   }
 
   setAngle(deg: number) {

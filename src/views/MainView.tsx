@@ -47,6 +47,7 @@ import { initPlanner } from "../lib/planner";
 import { IS_MAC } from "../lib/platform";
 import { initPopups, togglePopup } from "../lib/popups";
 import { initBlocks } from "../lib/blocks";
+import { initLecture } from "../lib/lecture";
 import { closeSleep, initSleep, toggleSleep, useSleep } from "../lib/sleep/session";
 import { initReminders } from "../lib/reminders";
 import { PHASES, getSettings, initSettingsSync, useSettings, type Page, type Phase } from "../lib/settings";
@@ -58,6 +59,8 @@ import { useLook } from "../lib/theme";
 import { initTimer, initTimerConfig, timer, useCountdown, useTimer } from "../lib/timer";
 import { checkUpdate, useUpdate } from "../lib/update";
 import { initWindows, toggleFullscreen, toggleWidget } from "../lib/windows";
+import { LecturePage } from "./LecturePage";
+import { LectureAsk } from "../components/LectureAsk";
 import { ReviewPage } from "./ReviewPage";
 import { SchedulePage } from "./SchedulePage";
 
@@ -71,6 +74,7 @@ const PAGES: { value: Page; label: string }[] = [
   { value: "today", label: "今天" },
   { value: "schedule", label: "课表" },
   { value: "review", label: "复盘" },
+  { value: "lecture", label: "听课" },
 ];
 
 /** 不在"今天"页时，顶栏中间的小计时：一眼看到还剩多久，点一下回到今天 */
@@ -165,6 +169,7 @@ export function MainView() {
     initReminders();
     initBlocks();
     initSleep();
+    initLecture();
     // 画好第一帧再让后端显示窗口，免得闪一下（Mac 上藏着的窗口不画，最多等 100 毫秒）
     let alive = true;
     void nextFrame().then(() => {
@@ -346,18 +351,23 @@ export function MainView() {
     void toggleFullscreen().then(setFullscreen);
   }, []);
 
-  // 窗口没在前台时（在用别的软件），背景的色块停下不动：
-  // 毛玻璃要实时模糊它背后的东西，背景一动每一帧都要重算，一直开着很耗电
+  // 窗口没在前台时（在用别的软件），背景的色块停下不动，省电；
+  // 最小化、收进托盘时（看不见了）也停下
   useEffect(() => {
     const root = document.documentElement;
-    const update = () => root.classList.toggle("is-blurred", !document.hasFocus());
+    const update = () => {
+      root.classList.toggle("is-blurred", !document.hasFocus());
+      root.classList.toggle("is-hidden", document.hidden);
+    };
     update();
     window.addEventListener("focus", update);
     window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
     return () => {
       window.removeEventListener("focus", update);
       window.removeEventListener("blur", update);
-      root.classList.remove("is-blurred");
+      document.removeEventListener("visibilitychange", update);
+      root.classList.remove("is-blurred", "is-hidden");
     };
   }, []);
 
@@ -476,6 +486,17 @@ export function MainView() {
         ) : null}
 
         {page === "schedule" ? <SchedulePage confirm={openSheet} closeConfirm={closeSheet} /> : null}
+
+        {page === "lecture" ? (
+          <LecturePage
+            openSettings={() => {
+              setSettingsCategory("lecture");
+              setSettingsOpen(true);
+            }}
+          />
+        ) : null}
+
+        <LectureAsk hidden={page === "lecture" || sleep.open} onStarted={() => goTo("lecture")} />
 
         {page === "review" ? (
           <ReviewPage onOpenHistory={() => setHistoryOpen(true)} confirm={openSheet} closeConfirm={closeSheet} />

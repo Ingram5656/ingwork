@@ -4,6 +4,7 @@
 //! 只是从一个窗口变成了两个，宽度不同。尺寸和位置的算法在 logic.rs 里，带测试。
 //!
 //! 两个窗口在 tauri.conf.json 里写着 "create": false，第一次呼出时才创建；之后收起只是隐藏，下次呼出不用等。
+//! 收起后 10 分钟没再用就把窗口关掉，把网页内核占的内存还给系统。
 //!
 //! Mac 上有两处不一样：
 //! - 鼠标位置用 Tauri 自己的接口取（Windows 上沿用 ingtranslate 的 GetCursorPos）
@@ -305,8 +306,26 @@ pub fn hide(app: &AppHandle, label: &str) {
         }
         #[cfg(target_os = "macos")]
         give_focus_back(&app);
+
+        // 收起后 10 分钟没再用：把窗口整个关掉，网页内核占的内存还给系统。下次呼出再建，只慢零点几秒
+        std::thread::sleep(RELEASE_AFTER);
+        let popups = app.state::<Popups>();
+        let slot = popups.slot(&label);
+        if slot.hide_ticket.load(Ordering::SeqCst) != ticket {
+            return;
+        }
+        if let Some(win) = app.get_webview_window(&label) {
+            if !win.is_visible().unwrap_or(true) {
+                slot.ready.store(false, Ordering::SeqCst);
+                slot.pending.store(false, Ordering::SeqCst);
+                let _ = win.destroy();
+            }
+        }
     });
 }
+
+/// 小窗收起多久没用就关掉
+const RELEASE_AFTER: Duration = Duration::from_secs(10 * 60);
 
 /// Mac：小窗是从别的软件里呼出的，收起后把前台还给那个软件，可以接着打字。
 /// 另一个小窗还开着时不还（焦点在它身上）

@@ -58,7 +58,7 @@ export const DURATIONS: Record<Phase, { key: "focusMin" | "shortMin" | "longMin"
 };
 
 /** 主窗口的三页 */
-export type Page = "today" | "schedule" | "review";
+export type Page = "today" | "schedule" | "review" | "lecture";
 
 /** 翻译引擎："google" 是免费接口（连不上自动换 MyMemory），"llm" 是自己的大模型接口 */
 export type TranslateEngine = "google" | "llm";
@@ -137,6 +137,10 @@ export interface Settings {
   /** 离下节课不够一个完整番茄时，提示把这一段改短 */
   gapHint: boolean;
   /** 截止日期前一天晚上、当天早上各提醒一次 */
+  /** 听课用的 DeepSeek 密钥（听写、翻译、整理笔记都用它） */
+  lectureKey: string;
+  /** 上课时间到了，问一下要不要开始听课 */
+  lectureAsk: boolean;
   /** 睡眠模式：雨量 0–100，0 是晴天 */
   sleepRain: number;
   /** 雨往哪边斜（度），-40 到 40 */
@@ -227,6 +231,8 @@ export const DEFAULT_SETTINGS: Settings = {
   classLead: 10,
   gapHint: true,
   islandHaptics: true,
+  lectureKey: "",
+  lectureAsk: true,
   sleepRain: 45,
   sleepAngle: -8,
   sleepThunder: false,

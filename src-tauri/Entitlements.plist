@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Mac 打包签名时用：开了"加固运行时"的软件要在这里声明用麦克风，不然听课时系统直接拦掉 -->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>

@@ -59,6 +59,7 @@ import { playSound } from "../lib/timer";
 import { checkUpdate, installUpdate, useUpdate } from "../lib/update";
 import { patchWidget, toggleWidget, useIngfyIsland, useWidgetError } from "../lib/windows";
 import { IconClose } from "./Icons";
+import { LecturePrefsPage as LecturePrefs } from "./LectureSettings";
 import { SleepPage } from "./SleepSettings";
 import { Segmented } from "./Segmented";
 
@@ -71,6 +72,7 @@ export type Category =
   | "look"
   | "widget"
   | "sleep"
+  | "lecture"
   | "keys"
   | "general";
 
@@ -83,6 +85,7 @@ const CATEGORIES: { id: Category; name: string }[] = [
   { id: "look", name: "外观" },
   { id: "widget", name: "小组件" },
   { id: "sleep", name: "睡眠模式" },
+  { id: "lecture", name: "听课" },
   { id: "keys", name: "快捷键" },
   { id: "general", name: "通用" },
 ];
@@ -1363,6 +1366,9 @@ export function SettingsPanel({ initial, onClose, onPreview }: Props) {
             {category === "ambient" ? <AmbientPage {...page} /> : null}
             {category === "look" ? <LookPage {...page} onPreview={onPreview} /> : null}
             {category === "widget" ? <WidgetPage {...page} /> : null}
+            {category === "lecture" ? (
+              <LecturePrefs {...page} Group={Group} Row={Row} Toggle={Toggle} />
+            ) : null}
             {category === "sleep" ? (
               <SleepPage {...page} Group={Group} Row={Row} Toggle={Toggle} Slider={Slider} />
             ) : null}

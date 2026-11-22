@@ -100,47 +100,64 @@ input {
   pointer-events: none;
 }
 
-/* 流体色块：3 个超大圆，散落在角落外侧 */
+/*
+ * 流体色块：3 个超大圆，散落在角落外侧。
+ * 边缘的柔和是渐变本身画出来的，不用模糊滤镜：140 像素的模糊要给每个圆备一张比它还大的贴图、每帧重算，
+ * 高分屏上三个圆能吃掉好几 GB 内存（Windows 会把 C 盘上的虚拟内存文件撑大）。
+ * 圆比原来大一圈，正好补上模糊往外晕开的那部分，看起来和原来一样
+ */
 .bg__blob {
   position: absolute;
   border-radius: 50%;
-  filter: blur(140px);
+  background: radial-gradient(
+    closest-side,
+    var(--blob) 0%,
+    var(--blob) 34%,
+    color-mix(in srgb, var(--blob) 62%, transparent) 54%,
+    color-mix(in srgb, var(--blob) 22%, transparent) 76%,
+    transparent 100%
+  );
   will-change: transform;
   animation: breathe var(--breath, 18s) ease-in-out infinite alternate;
 }
 
-/* 窗口没在前台时停下：上面叠着毛玻璃，背景一动每一帧都要重新模糊，很耗电 */
+/* 窗口没在前台时停下，省电 */
 html.is-blurred .bg__blob {
   animation-play-state: paused;
 }
 
 .bg__blob--a {
-  width: 52vw;
-  height: 52vw;
-  left: -14vw;
-  top: -20vw;
-  background: var(--c1);
+  --blob: var(--c1);
+  width: 74vw;
+  height: 74vw;
+  left: -25vw;
+  top: -31vw;
   opacity: 0.55;
 }
 
 .bg__blob--b {
-  width: 48vw;
-  height: 48vw;
-  right: -12vw;
-  bottom: -22vw;
-  background: var(--c5);
+  --blob: var(--c5);
+  width: 70vw;
+  height: 70vw;
+  right: -23vw;
+  bottom: -33vw;
   opacity: 0.5;
   animation-delay: -6s;
 }
 
 .bg__blob--c {
-  width: 44vw;
-  height: 44vw;
-  right: 6vw;
-  top: -26vw;
-  background: var(--c3);
+  --blob: var(--c3);
+  width: 66vw;
+  height: 66vw;
+  right: -5vw;
+  top: -37vw;
   opacity: 0.4;
   animation-delay: -11s;
+}
+
+/* 窗口最小化、收进托盘时整个停下（界面看不见了，没必要动） */
+html.is-hidden .bg__blob {
+  animation-play-state: paused;
 }
 
 /* 休息时呼吸得更慢；暂停时停住 */
@@ -225,7 +242,10 @@ html.is-blurred .bg__blob {
     inset 0 -1px 0 rgba(255, 255, 255, 0.1),
     inset 0 0 20px rgba(255, 255, 255, 0.06),
     0 24px 60px rgba(8, 4, 32, 0.4);
-  backdrop-filter: blur(28px) saturate(180%) brightness(1.04);
+  /*
+   * 不用 backdrop-filter：背景本来就是柔和的色块，模糊一遍看不出区别，
+   * 却要给每块玻璃备一张和它一样大的贴图、背景一动就重算。玻璃感靠上面的渐变和高光
+   */
 }
 
 .glass--thick {
@@ -241,7 +261,6 @@ html.is-blurred .bg__blob {
     inset 0 -1px 0 rgba(255, 255, 255, 0.08),
     inset 0 0 20px rgba(255, 255, 255, 0.05),
     0 30px 80px rgba(6, 3, 24, 0.55);
-  backdrop-filter: blur(40px) saturate(170%);
 }
 
 .capsule {
@@ -1900,7 +1919,7 @@ html.is-widget #root {
  * 窗口四周留 14 像素给投影。
  * 宽度跟着内容走，窗口再按量出来的大小改（见 WidgetView 的 fitWindow），
  * 这样字体不同、或者系统调大了文本大小，也不会装不下。
- * 透明窗口模糊不到后面的桌面，所以这里的玻璃不用 backdrop-filter，
+ * 透明窗口模糊不到后面的桌面（主窗口的玻璃也不模糊背后，省内存），
  * 底色比主窗口的厚玻璃更实一些，放在任何壁纸上字都看得清。
  */
 .widget {
@@ -2577,7 +2596,6 @@ button.tl__block:focus-visible {
     inset 0 1px 0 rgba(255, 255, 255, 0.45),
     inset 0 -1px 0 rgba(255, 255, 255, 0.08),
     0 30px 80px rgba(6, 3, 24, 0.55);
-  backdrop-filter: blur(40px) saturate(170%);
 }
 
 .dl__head {
@@ -3856,7 +3874,6 @@ html.is-popup #root {
     color-mix(in srgb, var(--c1) 22%, rgba(24, 16, 48, 0.94)),
     color-mix(in srgb, var(--c5) 30%, rgba(12, 8, 26, 0.96))
   );
-  backdrop-filter: blur(40px) saturate(170%);
   border: 1px solid rgba(255, 255, 255, 0.22);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.4),
@@ -4785,6 +4802,11 @@ html.is-island #root {
   }
 }
 
+/* 睡眠模式里玻璃后面是雨和灯光，不模糊背后的话字会花：控件底色压暗一些 */
+.sleepbar > .glass {
+  background: rgba(14, 10, 34, 0.62);
+}
+
 .sleepbar__exit {
   gap: 10px;
   padding: 4px 4px 4px 18px;
@@ -5052,4 +5074,783 @@ html.is-island #root {
 .linkbtn:disabled {
   opacity: 0.45;
   cursor: progress;
+}
+
+/* ---------- 听课：左边实时翻译，右边笔记 ---------- */
+
+.page--lecture {
+  left: 36px;
+  right: 36px;
+  top: 104px;
+  bottom: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.22fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.lec-live,
+.lec-notes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 34px;
+  overflow: hidden;
+}
+
+/* 左边：选课 */
+.lec-start {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(520px, 100%);
+  margin: auto;
+  padding: 32px;
+}
+
+.lec-start__title {
+  margin: 0 0 4px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.lec-start__hint,
+.lec-start__note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.lec-start__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lec-class {
+  display: grid;
+  grid-template-columns: 108px 1fr auto;
+  grid-template-areas:
+    "time name now"
+    "time place now";
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
+  padding: 12px 16px;
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.lec-class:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.lec-class.is-on {
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.lec-class:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.lec-class__time {
+  grid-area: time;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.lec-class__name {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.lec-class__place {
+  grid-area: place;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.lec-class__now {
+  grid-area: now;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c1) 55%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lec-start__other {
+  flex: none;
+}
+
+.lec-start__go {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.lec-start__btn {
+  height: 50px;
+  font-size: 16px;
+}
+
+.lec-start__key {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 6px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lec-start__key p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 左边：听课中 */
+.lec-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 26px 12px 30px;
+}
+
+.lec-head__text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 英国的课名常常很长：最多两行，再长才省略 */
+.lec-head__title {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.lec-head__sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.lec-head__actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+/* 音量带：最近几秒的声音，从左（以前）到右（现在）。停顿的地方矮下去，就是切段的地方 */
+.lec-band {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 44px;
+  margin: 0 30px 6px;
+  padding: 0 2px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000);
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000);
+}
+
+.lec-band span {
+  flex: 1;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--c1) 70%, #fff));
+  transform-origin: center;
+  transition: transform 0.12s linear;
+}
+
+.lec-band span:last-child {
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.7);
+}
+
+.lec-band.is-quiet span {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.lec-stream {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 30px 24px;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 28px, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(180deg, transparent, #000 28px, #000 calc(100% - 20px), transparent);
+}
+
+.lec-stream__empty {
+  padding: 40px 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.lec-seg {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lec-seg:first-child {
+  border-top: 0;
+}
+
+.lec-seg__time {
+  padding-top: 2px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lec-seg__body {
+  max-width: 46em;
+}
+
+.lec-seg__en {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(226, 220, 255, 0.62);
+}
+
+.lec-seg__zh {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.7;
+  color: #fff;
+}
+
+.lec-seg__zh.is-pending {
+  color: rgba(255, 255, 255, 0.45);
+  animation: lec-breathe 1.4s ease-in-out infinite;
+}
+
+/* 最新的一段：左边一道亮线，表示"刚说完的" */
+.lec-seg.is-latest .lec-seg__body {
+  position: relative;
+}
+
+.lec-seg.is-latest .lec-seg__body::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 2px;
+  background: #fff;
+  animation: lec-latest-in 0.5s var(--ease-apple) both;
+}
+
+@keyframes lec-latest-in {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.lec-latest {
+  position: absolute;
+  left: 50%;
+  bottom: 62px;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 22px rgba(8, 4, 32, 0.35);
+  cursor: pointer;
+}
+
+.lec-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 46px;
+  padding: 0 30px 18px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.lec-foot__live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+}
+
+.lec-foot__error {
+  color: #ffd2dc;
+}
+
+.lec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff6b8a;
+  box-shadow: 0 0 0 0 rgba(255, 107, 138, 0.6);
+  animation: lec-pulse 1.8s ease-out infinite;
+}
+
+@keyframes lec-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 138, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 9px rgba(255, 107, 138, 0);
+  }
+}
+
+@keyframes lec-breathe {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* 右边：笔记 */
+.lec-nhead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 26px 26px 14px 30px;
+}
+
+.lec-nhead__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.lec-nhead__status {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.lec-nhead__status.is-busy {
+  color: #fff;
+  animation: lec-breathe 1.4s ease-in-out infinite;
+}
+
+.lec-nhead__actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* 笔记的纸面：比面板亮一点，像夹在玻璃后面的一页 */
+.lec-paper {
+  flex: 1;
+  min-height: 0;
+  margin: 0 14px 14px;
+  padding: 22px 24px 26px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.085);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.lec-paper__empty {
+  margin: 0 0 14px;
+  max-width: 30em;
+  font-size: 14px;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.lec-doc {
+  font-size: 14.5px;
+  line-height: 1.75;
+}
+
+/* 听课中的是草稿：边上一道虚线，下课整理完变成实的 */
+.lec-doc.is-draft {
+  padding-left: 14px;
+  border-left: 1.5px dashed rgba(255, 255, 255, 0.28);
+}
+
+.lec-doc__summary {
+  margin: 0 0 18px;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.lec-doc__part + .lec-doc__part {
+  margin-top: 18px;
+}
+
+.lec-doc h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.lec-doc ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.lec-doc li + li {
+  margin-top: 4px;
+}
+
+.lec-doc li::marker {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lec-terms {
+  margin: 0;
+}
+
+.lec-term {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lec-term:first-child {
+  border-top: 0;
+}
+
+.lec-term dt {
+  font-weight: 600;
+}
+
+.lec-term dd {
+  margin: 0;
+}
+
+.lec-term__note {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.lec-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lec-add:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.lec-add:disabled {
+  cursor: default;
+}
+
+.lec-add:not(.is-done):disabled {
+  opacity: 0.45;
+}
+
+.lec-add.is-done {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.lec-add svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lec-dues {
+  list-style: none;
+  padding-left: 0 !important;
+}
+
+.lec-due {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lec-due:first-child {
+  border-top: 0;
+}
+
+.lec-due__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.lec-due__title {
+  display: block;
+  font-weight: 600;
+}
+
+.lec-due__quote {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: rgba(226, 220, 255, 0.62);
+}
+
+.lec-due__act {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.lec-due__act .field--date {
+  width: 140px;
+  height: 32px;
+  font-size: 13px;
+}
+
+/* 以前的笔记 */
+.lec-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lec-history__item {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  grid-template-areas:
+    "date course"
+    "date summary";
+  column-gap: 12px;
+  width: 100%;
+  padding: 12px 10px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lec-history__item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lec-history__item:focus-visible {
+  outline: 2px solid #fff;
+}
+
+.lec-history__date {
+  grid-area: date;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.lec-history__course {
+  grid-area: course;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.lec-history__summary {
+  grid-area: summary;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lec-band span {
+    transition: none;
+  }
+
+  .lec-dot,
+  .lec-seg__zh.is-pending,
+  .lec-nhead__status.is-busy,
+  .lec-seg.is-latest .lec-seg__body::before {
+    animation: none;
+  }
+}
+
+/* ---------- 设置：听课 ---------- */
+
+.keyfield {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.keyfield__input {
+  padding-right: 64px;
+}
+
+.keyfield__eye {
+  position: absolute;
+  right: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.keyfield__eye:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.keyfield__error {
+  margin: 0;
+  padding: 0 18px 14px;
+}
+
+.howto {
+  margin: 0;
+  padding: 6px 18px 4px;
+  list-style: none;
+}
+
+.howto__step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  padding: 10px 0 14px;
+}
+
+/* 一步接一步：编号之间连一道竖线 */
+.howto__step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 13.5px;
+  top: 40px;
+  bottom: -6px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.howto__num {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.howto__main {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.howto__detail {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.howto__open {
+  margin-top: 10px;
+}
+
+/* 上课时间到了问一下要不要听课 */
+.lec-ask {
+  position: absolute;
+  left: 50%;
+  top: 104px;
+  z-index: 30;
+  background: rgba(34, 20, 66, 0.9);
+  box-shadow: 0 12px 32px rgba(8, 4, 24, 0.45);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 16px;
+  max-width: calc(100% - 64px);
+  animation: lec-ask-in 360ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.lec-ask > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  opacity: 0.8;
+}
+.lec-ask__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+@keyframes lec-ask-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lec-ask {
+    animation: none;
+  }
 }

@@ -62,6 +62,15 @@
 - 下一个有课的日子第一节是什么，上课前放得下几个番茄。
 - "按周看专注记录"打开 ingclock 原来的统计面板。
 
+**听课**（要自己的 DeepSeek 密钥）
+- 上课时打开"听课"页，选今天的这节课（正在上的会先选好），点"开始听课"。上课时间到了主界面上也会问一句，点一下就开始。
+- 用电脑的麦克风听老师讲课，按停顿一段一段送去 DeepSeek 听写成英文、再翻成中文。左边是一段段的原文和译文，最新的在最下面。
+- 右边是笔记：听课中大约每 5 分钟整理一版提纲；点"下课，整理笔记"后把整节课完整整理一遍：这节课讲了什么、按主题分的提纲、术语、老师说的作业和截止日期、回去要复习的地方。
+- 术语能一键加进生词本，作业能一键加进截止日期。笔记能复制，也能导出成 Markdown（附上整节课的中英对照）。
+- 录音不保存，只存文字。以前的笔记在右边下面能再打开，数据文件夹换到 OneDrive 里也会同步。
+- 断网或者 DeepSeek 忙时，录下来的先攒着，连上了按顺序补上，不会丢也不会乱。
+- 密钥在"设置 → 听课"里填，那一页有一步步的申请教程。费用按 DeepSeek 的价格从你自己的账户里扣。
+
 **睡眠模式**（画面从 ingfy 的助眠模式搬过来）
 - 顶栏的月亮按钮或者托盘菜单打开：整个窗口变成一扇夜里下雨的窗。窗外是城市夜景、山间、海边，也可以用自己的图片或视频；三种窗框。
 - 顶上拖雨量，从晴天到瓢泼大雨，玻璃起雾、挂水珠、往下流；可以打雷。
@@ -195,6 +204,12 @@ Mac 上翻译和杂念箱没有沿用 Windows 的 `⌥Q`、`⌥N`：`⌥` 加字
 
 ## 常见问题
 
+**听课时没有字出来**
+看左下角的提示。"密钥不对"去"设置 → 听课"里点"试一下"；"余额不够"要去 DeepSeek 开放平台充值；"麦克风打不开"在 Windows 的"设置 → 隐私和安全性 → 麦克风"、Mac 的"系统设置 → 隐私与安全性 → 麦克风"里允许 ingwork。老师说完一句停一下才会出来一段，十几秒的延迟是正常的。
+
+**打开 ingwork 后 C 盘空间少了好几 GB**
+0.5.0 以前背景的模糊光斑和面板的毛玻璃效果很占显存，内存不够时 Windows 会把页面文件（pagefile.sys）撑大，关掉 ingwork 后又还回来。0.5.0 去掉了这两样，占用小了很多。
+
 **翻译小窗呼不出来**
 看"设置 → 快捷键"里"呼出翻译"那一行有没有写"被别的软件占用了"。多半是 ingtranslate 还开着，退出它，或者换一个组合。
 
@@ -298,9 +313,10 @@ src/
   main.tsx                按窗口标签决定显示哪个界面：主窗口、小组件、刘海番茄、翻译、杂念箱
   styles.css              全部样式。1–15 节是 ingclock 原有的，16 节以后是 ingwork 新加的
   views/
-    MainView.tsx          主窗口：三页、顶栏、底栏
+    MainView.tsx          主窗口：四页、顶栏、底栏
     SchedulePage.tsx      课表页：导入、加课、周视图
     ReviewPage.tsx        复盘页
+    LecturePage.tsx       听课页：左边实时翻译，右边笔记和以前的笔记
     TranslateView.tsx     翻译小窗（从 ingtranslate 的 renderer/app.js 改写）
     CaptureView.tsx       杂念箱小窗
     WidgetView.tsx        桌面小组件
@@ -311,6 +327,8 @@ src/
     SleepMode.tsx         睡眠模式：铺满窗口的那扇窗、顶上一排控件
     SleepWindow.tsx       窗、雨、雾、窗框怎么画（从 ingfy 搬过来）
     SleepSettings.tsx     设置里"睡眠模式"那一页
+    LectureSettings.tsx   设置里"听课"那一页：DeepSeek 密钥、申请教程
+    LectureAsk.tsx        上课时间到了问一下要不要听课
     TodayCards.tsx        空档提示、复习生词、下节课、杂念箱
     Deadlines.tsx         截止日期
     TasksPanel.tsx Clock.tsx StatsPanel.tsx SettingsPanel.tsx …  （ingclock 原有，稍有改动）
@@ -322,6 +340,7 @@ src/
     timetable.ts          PDF、网页、粘贴的表格 → 课：认表头、周次、第 1 周是哪天
     blocks.ts             把待办排进空档、"帮我排"、到点提醒
     haptics.ts            Mac 触控板轻震
+    lecture.ts            听课的状态（后台发过来）、开始和结束、笔记转成 Markdown
     sleep/                睡眠模式：开关和定时、声音音量（session.ts），景色、雨、雷声、自己的图片视频（从 ingfy 搬过来）
     popups.ts             翻译和杂念箱小窗、接过 ingtranslate 的设置
     reminders.ts          上课、截止日期、排好的待办的提醒
@@ -335,16 +354,19 @@ src-tauri/src/
   planner.rs              课表、截止日期、杂念箱、生词本、排进空档的待办：存 planner.json，几台电脑共用时逐条合并
   popup.rs                翻译和杂念箱小窗：呼出、收起、大小跟着页面走
   island.rs               Mac 的刘海番茄：窗口放到菜单栏上面、读刘海的位置、鼠标移上去展开、触控板轻震
-  awake.rs                Mac：计时进行中时不让系统把 ingwork 拖慢（App Nap）
+  lecture.rs              听课：开麦克风、按停顿切段、送 DeepSeek 听写和翻译、整理笔记、存进 lectures/
+  awake.rs                Mac：计时进行中、听课时不让系统把 ingwork 拖慢（App Nap）
   reminders.rs            提醒：界面排好时间，到点由后台发通知
   backup.rs               备份：导出成一个文件，导回来时合并
   logger.rs               日志：出错和崩溃写进 logs/ingwork.log
   haptics.rs              Mac 触控板轻震
-src-tauri/sounds/ambient/ 环境音文件，放进来的都会出现在软件里。鸟声、车声、风声由 scripts/make-ambient.mjs 生成
   translate.rs            三个翻译引擎（从 ingtranslate 搬过来）
   legacy.rs               第一次启动时接过 ingclock 的数据、读 ingtranslate 的设置
   logic.rs                纯逻辑，带测试：小窗尺寸、语言判断、按条目合并
   timer.rs tasks.rs stats.rs location.rs widget.rs link.rs sound.rs update.rs …  （ingclock 原有）
+src-tauri/sounds/ambient/ 环境音文件，放进来的都会出现在软件里。鸟声、车声、风声由 scripts/make-ambient.mjs 生成
+src-tauri/Info.plist      Mac：用麦克风时系统弹窗里的那句说明
+src-tauri/Entitlements.plist  Mac：允许用麦克风
 mcp/ingwork-mcp.mjs       让 AI 助手读写待办（和 ingclock 的一样，只认待办）
 docs/                     设计风格、开发指南、截图
 ```

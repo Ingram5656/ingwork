@@ -7,6 +7,7 @@ mod awake;
 mod backup;
 mod haptics;
 mod island;
+mod lecture;
 mod legacy;
 mod link;
 mod location;
@@ -727,6 +728,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // 自动更新：公钥和地址在 update.rs 里，用到时才设，这里只装上插件
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(lecture::Lecture::default())
         .manage(Timer::new())
         .manage(Mutex::new(Texts::default()))
         .manage(Sound::spawn())
@@ -828,6 +830,20 @@ pub fn run() {
             island::island_ready,
             island::island_wings,
             haptics::haptic,
+            lecture::lecture_get,
+            lecture::lecture_start,
+            lecture::lecture_pause,
+            lecture::lecture_resume,
+            lecture::lecture_stop,
+            lecture::lecture_close,
+            lecture::lecture_summarize,
+            lecture::lecture_set_key,
+            lecture::lecture_open,
+            lecture::lecture_remove,
+            lecture::lecture_list,
+            lecture::lecture_export,
+            lecture::lecture_check_key,
+            lecture::lecture_open_platform,
             haptics::haptics_enable,
             island::island_geometry,
             tasks::tasks_get,
