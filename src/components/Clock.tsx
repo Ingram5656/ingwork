@@ -11,6 +11,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { t, useLang } from "../lib/i18n";
+import { haptic } from "../lib/haptics";
 import { DURATIONS, getSettings, updateSettings, type Phase } from "../lib/settings";
 import { currentTask, useTasks } from "../lib/tasks";
 import { useCountdown, useSegmentMinutes, useTimer } from "../lib/timer";
@@ -125,7 +126,13 @@ function useAdjust(phase: Phase, started: boolean) {
     const { key, min, max } = DURATIONS[phase];
     const now = getSettings()[key];
     const next = Math.max(min, Math.min(max, now + delta));
-    if (next !== now) updateSettings({ [key]: next });
+    if (next !== now) {
+      updateSettings({ [key]: next });
+      // Mac 触控板：每调一格轻轻"咔哒"一下，调到头那一下重一点
+      haptic(next === min || next === max ? "edge" : "tick");
+    } else {
+      haptic("edge");
+    }
   };
 
   const onWheel = (event: ReactWheelEvent<HTMLDivElement>) => {

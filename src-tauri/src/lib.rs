@@ -5,6 +5,7 @@
 mod ambient;
 mod awake;
 mod backup;
+mod haptics;
 mod island;
 mod legacy;
 mod link;
@@ -65,6 +66,7 @@ struct Texts {
     widget_hide: String,
     widget_lock: String,
     widget_unlock: String,
+    sleep: String,
 }
 
 impl Default for Texts {
@@ -89,6 +91,7 @@ impl Default for Texts {
             widget_hide: "隐藏小组件".into(),
             widget_lock: "锁定小组件".into(),
             widget_unlock: "解锁小组件".into(),
+            sleep: "睡眠模式".into(),
         }
     }
 }
@@ -101,6 +104,7 @@ struct TrayState {
     quit: MenuItem<Wry>,
     widget: MenuItem<Wry>,
     lock: MenuItem<Wry>,
+    sleep: MenuItem<Wry>,
     shown: Mutex<(Option<bool>, Option<Phase>)>,
 }
 
@@ -450,6 +454,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", &texts.quit, true, None::<&str>)?;
     let widget = MenuItem::with_id(app, "widget", &texts.widget_show, true, None::<&str>)?;
     let lock = MenuItem::with_id(app, "lock", &texts.widget_lock, false, None::<&str>)?;
+    let sleep = MenuItem::with_id(app, "sleep", &texts.sleep, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(
@@ -460,6 +465,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &separator,
             &widget,
             &lock,
+            &sleep,
             &separator2,
             &open,
             &quit,
@@ -489,6 +495,11 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             }
             "lock" => {
                 let _ = app.emit("tray-command", "widget-lock");
+            }
+            // 睡眠模式在主窗口里：先把主窗口叫出来，再告诉界面
+            "sleep" => {
+                show_main(app);
+                let _ = app.emit("tray-command", "sleep-toggle");
             }
             "open" => show_main(app),
             "quit" => exit_app(app),
@@ -523,6 +534,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         quit,
         widget,
         lock,
+        sleep,
         shown: Mutex::new((None, None)),
     });
     Ok(())
@@ -606,6 +618,7 @@ fn set_tray_texts(app: AppHandle, timer: State<Timer>, texts: Texts) {
         let _ = tray_state.skip.set_text(texts.skip.as_str());
         let _ = tray_state.open.set_text(texts.open.as_str());
         let _ = tray_state.quit.set_text(texts.quit.as_str());
+        let _ = tray_state.sleep.set_text(texts.sleep.as_str());
         // 清掉记录，下面 publish 时把"开始 / 暂停"也按新文字重写一遍
         *tray_state.shown.lock().unwrap_or_else(|e| e.into_inner()) = (None, None);
     }
@@ -814,7 +827,8 @@ pub fn run() {
             island::island_apply,
             island::island_ready,
             island::island_wings,
-            island::island_haptics,
+            haptics::haptic,
+            haptics::haptics_enable,
             island::island_geometry,
             tasks::tasks_get,
             tasks::task_add,

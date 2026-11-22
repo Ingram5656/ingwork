@@ -282,3 +282,52 @@ export function IconUpload() {
     </Icon>
   );
 }
+
+/** 月亮：睡眠模式 */
+export function IconMoon() {
+  return (
+    <Icon>
+      <path d="M15.8 12.4A6.4 6.4 0 0 1 7.6 4.2a6.4 6.4 0 1 0 8.2 8.2Z" />
+    </Icon>
+  );
+}
+
+/** 太阳：雨量滑块的晴天那头 */
+export function IconSun() {
+  return (
+    <Icon>
+      <circle cx="10" cy="10" r="3.2" />
+      <path d="M10 2.8v1.6M10 15.6v1.6M2.8 10h1.6M15.6 10h1.6M4.9 4.9l1.1 1.1M14 14l1.1 1.1M4.9 15.1 6 14M14 6l1.1-1.1" />
+    </Icon>
+  );
+}
+
+/** 云和雨：雨量滑块的大雨那头 */
+export function IconRain() {
+  return (
+    <Icon>
+      <path d="M6 11.8a3.6 3.6 0 0 1 .4-7.2 4.4 4.4 0 0 1 8.2 1.6 2.8 2.8 0 0 1-.2 5.6H6Z" />
+      <path d="M7 14.4 6.2 16.6M10.4 14.4l-.8 2.2M13.8 14.4 13 16.6" />
+    </Icon>
+  );
+}
+
+/** 喇叭：声音开着 */
+export function IconSound() {
+  return (
+    <Icon>
+      <path d="M3.6 7.6h2.6L10 4.4v11.2l-3.8-3.2H3.6V7.6Z" />
+      <path d="M13 7.2a4 4 0 0 1 0 5.6M15.2 5a7 7 0 0 1 0 10" />
+    </Icon>
+  );
+}
+
+/** 喇叭打叉：声音关着 */
+export function IconSoundOff() {
+  return (
+    <Icon>
+      <path d="M3.6 7.6h2.6L10 4.4v11.2l-3.8-3.2H3.6V7.6Z" />
+      <path d="m13 7.6 4.4 4.8M17.4 7.6 13 12.4" />
+    </Icon>
+  );
+}

@@ -23,6 +23,7 @@ import {
   IconPlay,
   IconReset,
   IconSkip,
+  IconMoon,
   IconTranslate,
   IconWaves,
   IconWidget,
@@ -30,6 +31,7 @@ import {
 import { Presence } from "../components/Presence";
 import { Segmented } from "../components/Segmented";
 import { Onboarding } from "../components/Onboarding";
+import { SleepBackdrop, SleepBar } from "../components/SleepMode";
 import { SettingsPanel, type Category } from "../components/SettingsPanel";
 import { Sheet, type SheetSpec } from "../components/Sheet";
 import { StatsPanel } from "../components/StatsPanel";
@@ -45,6 +47,7 @@ import { initPlanner } from "../lib/planner";
 import { IS_MAC } from "../lib/platform";
 import { initPopups, togglePopup } from "../lib/popups";
 import { initBlocks } from "../lib/blocks";
+import { closeSleep, initSleep, toggleSleep, useSleep } from "../lib/sleep/session";
 import { initReminders } from "../lib/reminders";
 import { PHASES, getSettings, initSettingsSync, useSettings, type Page, type Phase } from "../lib/settings";
 import { accelKeys, initShortcuts } from "../lib/shortcuts";
@@ -105,6 +108,11 @@ export function MainView() {
   const updateState = useUpdate();
   const page = settings.page;
 
+  // 触控板轻震开不开，告诉后端（刘海展开、调时长都看它）
+  useEffect(() => {
+    call("haptics_enable", { on: settings.islandHaptics });
+  }, [settings.islandHaptics]);
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState<Category>("timer");
   const [tasksOpen, setTasksOpen] = useState(false);
@@ -120,10 +128,12 @@ export function MainView() {
     page === "today" &&
     (fullscreen || (settings.focusLayout && state.running && state.phase === "focus"));
 
-  // 课表、复盘页是拿来操作的，控件不自己收起
+  const sleep = useSleep();
+
+  // 课表、复盘页是拿来操作的，控件不自己收起；睡眠模式里不管在哪一页都收
   const idle = useIdle(
     3000,
-    page !== "today" || settingsOpen || tasksOpen || historyOpen || sheet !== null,
+    (page !== "today" && !sleep.open) || settingsOpen || tasksOpen || historyOpen || sheet !== null,
   );
 
   const openSheet = useCallback((spec: SheetSpec) => {
@@ -154,6 +164,7 @@ export function MainView() {
     initPopups();
     initReminders();
     initBlocks();
+    initSleep();
     // 画好第一帧再让后端显示窗口，免得闪一下（Mac 上藏着的窗口不画，最多等 100 毫秒）
     let alive = true;
     void nextFrame().then(() => {
@@ -388,6 +399,7 @@ export function MainView() {
         else if (settingsOpen) setSettingsOpen(false);
         else if (historyOpen) setHistoryOpen(false);
         else if (tasksOpen) setTasksOpen(false);
+        else if (sleep.open) closeSleep();
         else if (fullscreen) switchFullscreen();
         return;
       }
@@ -401,7 +413,7 @@ export function MainView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sheet, settingsOpen, historyOpen, tasksOpen, fullscreen, closeSheet, switchFullscreen]);
+  }, [sheet, settingsOpen, historyOpen, tasksOpen, sleep.open, fullscreen, closeSheet, switchFullscreen]);
 
   // ---------- 画面 ----------
 
@@ -417,6 +429,7 @@ export function MainView() {
   if (state.running) classes.push("is-running");
   else if (state.started) classes.push("is-paused");
   if (focusing) classes.push("is-focusing");
+  if (sleep.open) classes.push("is-sleeping");
 
   const appWindow = getCurrentWindow();
   const translateKeys = accelKeys(settings.shortcuts.translate);
@@ -433,6 +446,8 @@ export function MainView() {
         {background}
         <div className="bg__dim" />
       </div>
+
+      <SleepBackdrop />
 
       <div className="stage">
         <div className="dragzone" data-tauri-drag-region />
@@ -513,6 +528,15 @@ export function MainView() {
             </button>
             <button
               type="button"
+              className="ibtn"
+              title={t("睡眠模式")}
+              aria-label={t("睡眠模式")}
+              onClick={toggleSleep}
+            >
+              <IconMoon />
+            </button>
+            <button
+              type="button"
               className={settings.widget.open ? "ibtn is-on" : "ibtn"}
               title={settings.widget.open ? t("隐藏桌面小组件") : t("显示桌面小组件")}
               aria-label={settings.widget.open ? t("隐藏桌面小组件") : t("显示桌面小组件")}
@@ -576,6 +600,17 @@ export function MainView() {
             )}
           </div>
         </header>
+
+        {sleep.open ? (
+          <SleepBar
+            fullscreen={fullscreen}
+            onFullscreen={switchFullscreen}
+            onSettings={() => {
+              setSettingsCategory("sleep");
+              setSettingsOpen(true);
+            }}
+          />
+        ) : null}
 
         {page === "today" ? (
           <footer className="bottombar">

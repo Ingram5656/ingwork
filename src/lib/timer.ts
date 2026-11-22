@@ -197,6 +197,7 @@ function pushTexts(s: Settings): void {
       focusDoneLong: t("这一组完成了，休息 {n} 分钟", { n: s.longMin }),
       breakDoneTitle: t("休息结束"),
       breakDoneBody: t("开始下一段专注，{n} 分钟", { n: s.focusMin }),
+      sleep: t("睡眠模式"),
       widgetShow: t("显示小组件"),
       widgetHide: t("隐藏小组件"),
       widgetLock: t("锁定小组件"),

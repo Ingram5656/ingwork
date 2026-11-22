@@ -171,8 +171,6 @@ mod mac {
         /// 收起时两边伸出来了没有（计时没开始时只剩刘海本身）
         wings: AtomicBool,
         expanded: AtomicBool,
-        /// 展开时触控板轻震一下（设置里能关）
-        haptics: AtomicBool,
         /// 上一次震的时刻。鼠标在刘海边上进进出出时不要一直震
         last_haptic: Mutex<Option<Instant>>,
         /// 鼠标离刘海很远：轮询放慢，不用一秒查 20 次
@@ -368,11 +366,8 @@ mod mac {
     /// 两次震动至少隔这么久
     const HAPTIC_GAP: Duration = Duration::from_millis(1000);
 
-    /// 触控板轻震一下（Force Touch 触控板才有；用鼠标或者手指没放在触控板上时系统什么都不做）。只能在主线程上调
+    /// 展开时触控板轻震一下。只能在主线程上调
     fn haptic(state: &Island) {
-        if !state.haptics.load(Ordering::SeqCst) {
-            return;
-        }
         {
             let mut last = lock(&state.last_haptic);
             if last.is_some_and(|at| at.elapsed() < HAPTIC_GAP) {
@@ -380,20 +375,7 @@ mod mac {
             }
             *last = Some(Instant::now());
         }
-        // NSHapticFeedbackPatternAlignment = 1（最轻的那种"咔哒"），NSHapticFeedbackPerformanceTimeNow = 1
-        unsafe {
-            let performer: *mut AnyObject =
-                msg_send![class!(NSHapticFeedbackManager), defaultPerformer];
-            if performer.is_null() {
-                return;
-            }
-            let _: () =
-                msg_send![performer, performFeedbackPattern: 1isize, performanceTime: 1usize];
-        }
-    }
-
-    pub fn set_haptics(app: &AppHandle, on: bool) {
-        app.state::<Island>().haptics.store(on, Ordering::SeqCst);
+        crate::haptics::tap(crate::haptics::Kind::Tick);
     }
 
     /// 让出前台：ingwork 不再是当前软件，系统把前台还给之前用的那个。只能在主线程上调
@@ -564,15 +546,6 @@ pub fn island_wings(app: tauri::AppHandle, shown: bool) {
     mac::set_wings(&app, shown);
     #[cfg(not(target_os = "macos"))]
     let _ = (app, shown);
-}
-
-/// 展开时触控板震不震
-#[tauri::command]
-pub fn island_haptics(app: tauri::AppHandle, on: bool) {
-    #[cfg(target_os = "macos")]
-    mac::set_haptics(&app, on);
-    #[cfg(not(target_os = "macos"))]
-    let _ = (app, on);
 }
 
 /// 刘海和窗口的大小。还没放好时是 null，页面等 island-geometry 事件

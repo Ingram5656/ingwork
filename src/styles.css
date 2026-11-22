@@ -4618,3 +4618,438 @@ html.is-island #root {
   resize: vertical;
   font-size: 12.5px;
 }
+
+/* ---------- 课表翻周 ---------- */
+
+/* 新的一周从翻的方向滑进来：下一周从右边，上一周从左边 */
+.week-in {
+  animation: week-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.week-in--next {
+  --week-from: 28px;
+}
+
+.week-in--prev {
+  --week-from: -28px;
+}
+
+@keyframes week-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--week-from, 0));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 顶上的日期范围只淡入，不左右动，免得和两边的箭头抢 */
+.week__range.week-in {
+  animation-name: week-fade;
+  animation-duration: 0.24s;
+}
+
+@keyframes week-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .week-in {
+    animation-name: week-fade;
+    animation-duration: 0.2s;
+  }
+}
+
+/* ---------- 睡眠模式：一扇下雨的窗（画面从 ingfy 搬过来） ---------- */
+
+.sleepwin {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.sleep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #070a18;
+  animation: sleep-in 0.7s var(--ease-apple) both;
+}
+
+.sleepwin[data-state="out"] .sleep {
+  animation: sleep-out 0.45s ease-in forwards;
+}
+
+.sleep-cv {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.sleep-fog {
+  position: absolute;
+  inset: 0;
+}
+
+.sleep-video {
+  object-fit: cover;
+  transition: filter 0.9s ease;
+}
+
+/* 拖雨量滑块时天色、雾气慢慢跟上，不突变 */
+.sleep-fade {
+  transition: opacity 0.9s ease;
+}
+
+.sleep-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 无边框玻璃：四角压暗，加一道很淡的斜向反光 */
+.sleep-frame--none {
+  background:
+    linear-gradient(112deg, transparent 34%, rgba(255, 255, 255, 0.035) 43%, rgba(255, 255, 255, 0.012) 49%, transparent 56%),
+    radial-gradient(120% 100% at 50% 45%, transparent 55%, rgba(6, 4, 20, 0.5) 100%);
+}
+
+@keyframes sleep-in {
+  from {
+    opacity: 0;
+    transform: scale(1.03);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sleep-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+/* 睡眠模式里，原来的界面收起来（弹出的设置、确认框照样在最上面） */
+.app.is-sleeping .page,
+.app.is-sleeping .topbar:not(.sleepbar),
+.app.is-sleeping .bottombar {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.3s ease,
+    visibility 0s 0.3s;
+}
+
+/* 窗淡入完了，后面的流体背景就停下来不画，省电 */
+.app.is-sleeping .bg {
+  visibility: hidden;
+  transition: visibility 0s 0.8s;
+}
+
+.app.is-sleeping .stage {
+  z-index: 1;
+}
+
+/* 顶上一排：和平时的顶栏同一个位置 */
+.sleepbar > * {
+  animation: sleepbar-in 0.32s var(--ease-apple) backwards;
+}
+
+@keyframes sleepbar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.sleepbar__exit {
+  gap: 10px;
+  padding: 4px 4px 4px 18px;
+  height: 52px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sleepbar__exit svg {
+  width: 20px;
+  height: 20px;
+  opacity: 0.9;
+}
+
+.sleepbar__exit .btn {
+  margin-left: 6px;
+}
+
+.sleepbar__rain {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 20px 0 18px;
+}
+
+.sleepbar__rain svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  opacity: 0.85;
+}
+
+.sleepbar__word {
+  min-width: 4.5em;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+}
+
+.sleepbar__range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 240px;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sleepbar__range::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #fff var(--p, 0%), rgba(255, 255, 255, 0.24) var(--p, 0%));
+}
+
+.sleepbar__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(8, 4, 32, 0.45);
+  transition: transform 0.18s var(--ease-apple);
+}
+
+.sleepbar__range:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.sleepbar__range:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 4px;
+  border-radius: 999px;
+}
+
+/* 定时按钮：图标加字，开着定时时和别的"开着"的按钮一样是白底 */
+.chip-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 14px 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+
+.chip-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.chip-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.chip-btn.is-on,
+.chip-btn.is-on:hover {
+  background: #fff;
+  color: var(--ink);
+}
+
+.chip-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* 鼠标不动：控件往上收起 */
+.app.is-idle .sleepbar > * {
+  transform: translateY(-140px);
+  opacity: 0;
+  transition:
+    transform 0.55s var(--ease-apple),
+    opacity 0.55s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sleep,
+  .sleepbar > * {
+    animation-duration: 0.01s !important;
+  }
+
+  .sleep-fade {
+    transition: none;
+  }
+}
+
+/* ---------- 设置：睡眠模式的景色、窗框 ---------- */
+
+.picks {
+  flex-basis: 100%;
+  display: grid;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.picks--scene {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.picks--frame {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pick:disabled {
+  cursor: progress;
+}
+
+.pick__thumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  transition:
+    border-color 0.18s ease,
+    transform 0.18s var(--ease-apple);
+}
+
+.picks--frame .pick__thumb {
+  aspect-ratio: 180 / 68;
+}
+
+.pick:hover .pick__thumb {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.pick:active .pick__thumb {
+  transform: scale(0.97);
+}
+
+.pick[aria-checked="true"] .pick__thumb {
+  border-color: #fff;
+}
+
+.pick:focus-visible {
+  outline: none;
+}
+
+.pick:focus-visible .pick__thumb {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.pick__canvas,
+.pick__thumb > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.pick__hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.pick__check {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--ink);
+}
+
+.pick__check svg {
+  width: 14px;
+  height: 14px;
+}
+
+.picks__links {
+  flex-basis: 100%;
+  display: flex;
+  gap: 16px;
+}
+
+.linkbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.75);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.linkbtn:hover {
+  color: #fff;
+}
+
+.linkbtn:disabled {
+  opacity: 0.45;
+  cursor: progress;
+}

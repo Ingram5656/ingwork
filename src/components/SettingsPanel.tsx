@@ -59,6 +59,7 @@ import { playSound } from "../lib/timer";
 import { checkUpdate, installUpdate, useUpdate } from "../lib/update";
 import { patchWidget, toggleWidget, useIngfyIsland, useWidgetError } from "../lib/windows";
 import { IconClose } from "./Icons";
+import { SleepPage } from "./SleepSettings";
 import { Segmented } from "./Segmented";
 
 export type Category =
@@ -69,6 +70,7 @@ export type Category =
   | "ambient"
   | "look"
   | "widget"
+  | "sleep"
   | "keys"
   | "general";
 
@@ -80,6 +82,7 @@ const CATEGORIES: { id: Category; name: string }[] = [
   { id: "ambient", name: "环境音" },
   { id: "look", name: "外观" },
   { id: "widget", name: "小组件" },
+  { id: "sleep", name: "睡眠模式" },
   { id: "keys", name: "快捷键" },
   { id: "general", name: "通用" },
 ];
@@ -240,6 +243,15 @@ function TimerPage({ settings, update }: PageProps) {
             onChange={(autoStart) => update({ autoStart })}
           />
         </Row>
+        {IS_MAC ? (
+          <Row label={t("调时长时触控板轻震一下")}>
+            <Toggle
+              label={t("调时长时触控板轻震一下")}
+              on={settings.islandHaptics}
+              onChange={(islandHaptics) => update({ islandHaptics })}
+            />
+          </Row>
+        ) : null}
       </Group>
     </>
   );
@@ -1351,6 +1363,9 @@ export function SettingsPanel({ initial, onClose, onPreview }: Props) {
             {category === "ambient" ? <AmbientPage {...page} /> : null}
             {category === "look" ? <LookPage {...page} onPreview={onPreview} /> : null}
             {category === "widget" ? <WidgetPage {...page} /> : null}
+            {category === "sleep" ? (
+              <SleepPage {...page} Group={Group} Row={Row} Toggle={Toggle} Slider={Slider} />
+            ) : null}
             {category === "keys" ? <KeysPage {...page} /> : null}
             {category === "general" ? <GeneralPage {...page} /> : null}
           </div>

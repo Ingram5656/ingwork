@@ -5,6 +5,8 @@
 import { emit } from "@tauri-apps/api/event";
 import { useSyncExternalStore } from "react";
 import type { PresetId } from "./palette";
+import type { SleepScene } from "./sleep/scenery";
+import type { SleepFrame } from "./sleep/frames";
 import { IS_MAC } from "./platform";
 import { onEvent } from "./tauri";
 
@@ -135,7 +137,18 @@ export interface Settings {
   /** 离下节课不够一个完整番茄时，提示把这一段改短 */
   gapHint: boolean;
   /** 截止日期前一天晚上、当天早上各提醒一次 */
-  /** Mac 上番茄放在刘海时，展开那一下触控板轻轻震一下 */
+  /** 睡眠模式：雨量 0–100，0 是晴天 */
+  sleepRain: number;
+  /** 雨往哪边斜（度），-40 到 40 */
+  sleepAngle: number;
+  sleepThunder: boolean;
+  /** 睡眠模式里的声音开没开（雷声、环境音都归它管） */
+  sleepSound: boolean;
+  /** 睡眠模式的环境音，各自的音量 0–1 */
+  sleepAmbient: Record<string, number>;
+  sleepScene: SleepScene;
+  sleepFrame: SleepFrame;
+  /** Mac 触控板轻震：调番茄时长的每一格、调到头、刘海番茄展开。名字是历史原因，管的是全部 */
   islandHaptics: boolean;
   /** 第一次打开时的引导走完了（或者点了跳过） */
   onboarded: boolean;
@@ -214,6 +227,13 @@ export const DEFAULT_SETTINGS: Settings = {
   classLead: 10,
   gapHint: true,
   islandHaptics: true,
+  sleepRain: 45,
+  sleepAngle: -8,
+  sleepThunder: false,
+  sleepSound: true,
+  sleepAmbient: { rain: 0.6 },
+  sleepScene: "city",
+  sleepFrame: "none",
   onboarded: false,
   deadlineRemind: true,
   blockRemind: true,
@@ -244,6 +264,7 @@ function normalize(saved: Partial<Settings>): Settings {
     shortcuts: { ...base.shortcuts, ...saved.shortcuts },
     widget: { ...base.widget, ...saved.widget },
     trLlm: { ...base.trLlm, ...saved.trLlm },
+    sleepAmbient: { ...(saved.sleepAmbient ?? base.sleepAmbient) },
   };
 }
 

@@ -17,6 +17,7 @@ const NAMES: Record<string, string> = {
   cafe: "咖啡馆",
   fire: "篝火",
   forest: "森林",
+  traffic: "车声",
   wind: "风声",
   stream: "溪流",
   night: "夏夜",
@@ -62,17 +63,40 @@ export function useAmbient(): AmbientView {
 
 let lastPushed = "";
 
+/** 睡眠模式开着时要放的声音（每种多大声，已经算好），null 是没开睡眠模式 */
+let sleepMix: Record<string, number> | null = null;
+
+/**
+ * 睡眠模式接管环境音：开着时只放睡眠模式的声音，不管计时在不在走；
+ * 传空对象是睡眠模式开着但声音关了（什么都不放）；传 null 交还给专注的环境音
+ */
+export function setSleepAmbient(levels: Record<string, number> | null): void {
+  sleepMix = levels;
+  push();
+}
+
 function push(): void {
   const s = getSettings();
-  const config = {
-    on: s.ambientOn,
-    inBreaks: s.ambientInBreaks,
-    preview: view.preview,
-    // 只发现在真有的声音，文件换过以后旧名字不会留着
-    mix: view.list
-      .filter((id) => (s.ambientMix[id] ?? 0) > 0)
-      .map((id) => ({ id, volume: s.ambientMix[id] })),
-  };
+  const sleep = sleepMix && !view.preview ? sleepMix : null;
+  const config = sleep
+    ? {
+        on: false,
+        inBreaks: false,
+        // 后端看到"试听"就不管计时状态直接放
+        preview: true,
+        mix: view.list
+          .filter((id) => (sleep[id] ?? 0) > 0.0005)
+          .map((id) => ({ id, volume: Math.min(1, sleep[id]) })),
+      }
+    : {
+        on: s.ambientOn,
+        inBreaks: s.ambientInBreaks,
+        preview: view.preview,
+        // 只发现在真有的声音，文件换过以后旧名字不会留着
+        mix: view.list
+          .filter((id) => (s.ambientMix[id] ?? 0) > 0)
+          .map((id) => ({ id, volume: s.ambientMix[id] })),
+      };
   const key = JSON.stringify(config);
   if (key === lastPushed) return;
   lastPushed = key;

@@ -7,10 +7,12 @@ import {
   type ClipboardEvent,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import { IconChevronLeft, IconChevronRight, IconUpload } from "../components/Icons";
 import { Segmented } from "../components/Segmented";
 import type { SheetSpec } from "../components/Sheet";
+import { haptic } from "../lib/haptics";
 import { parseIcs } from "../lib/ics";
 import { readPdf } from "../lib/pdf";
 import { blocksFromHtml, blocksFromPdf, blocksFromText, readTimetable, type TtBlock } from "../lib/timetable";
@@ -498,7 +500,33 @@ function WeekGrid({ onPick }: { onPick: (course: Course) => void }) {
   const now = useNow();
   const { courses } = usePlanner();
   const { records } = useStats();
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffsetState] = useState(0);
+  // 往哪边翻：新的一周从右边（下一周）或左边（上一周）滑进来
+  const [dir, setDir] = useState<"next" | "prev" | null>(null);
+  const setOffset = (next: number) => {
+    if (next === offset) return;
+    setDir(next > offset ? "next" : "prev");
+    setOffsetState(next);
+    haptic("tick");
+  };
+
+  // 触控板左右两指滑动翻周：横向滑够一段算一次，一次手势只翻一周
+  const swipe = useRef({ acc: 0, lockedUntil: 0 });
+  const onWheel = (event: ReactWheelEvent<HTMLElement>) => {
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+    const now = Date.now();
+    const st = swipe.current;
+    if (now < st.lockedUntil) {
+      // 同一下手势的惯性还在滑：顺延，直到停下来
+      st.lockedUntil = now + 250;
+      return;
+    }
+    st.acc += event.deltaX;
+    if (Math.abs(st.acc) < 90) return;
+    setOffset(offset + (st.acc > 0 ? 1 : -1));
+    st.acc = 0;
+    st.lockedUntil = now + 400;
+  };
 
   const days = weekDays(addDays(now, offset * 7));
   const perDay = days.map((day) => classesOn(courses, day));
@@ -525,7 +553,7 @@ function WeekGrid({ onPick }: { onPick: (course: Course) => void }) {
   if (offset === 0) rangeLabel = t("本周，{range}", { range: rangeLabel });
 
   return (
-    <section className="week glass glass--thick" aria-label={t("一周的课")}>
+    <section className="week glass glass--thick" aria-label={t("一周的课")} onWheel={onWheel}>
       <div className="week__nav">
         <button
           type="button"
@@ -536,7 +564,9 @@ function WeekGrid({ onPick }: { onPick: (course: Course) => void }) {
         >
           <IconChevronLeft />
         </button>
-        <span className="week__range">{rangeLabel}</span>
+        <span key={offset} className={dir ? `week__range week-in week-in--${dir}` : "week__range"}>
+          {rangeLabel}
+        </span>
         <button
           type="button"
           className="ibtn"
@@ -553,7 +583,7 @@ function WeekGrid({ onPick }: { onPick: (course: Course) => void }) {
         ) : null}
       </div>
 
-      <div className="week__heads">
+      <div key={`h${offset}`} className={dir ? `week__heads week-in week-in--${dir}` : "week__heads"}>
         {days.map((day, i) => (
           <div key={dayKey(day)} className={dayKey(day) === todayKey ? "week__head is-today" : "week__head"}>
             <span className="week__dow">{t(WEEKDAY_NAMES[i])}</span>
@@ -573,7 +603,7 @@ function WeekGrid({ onPick }: { onPick: (course: Course) => void }) {
         {hours.map((h) => (
           <div key={`l${h}`} className="week__line" style={{ top: y(h * 60) }} aria-hidden="true" />
         ))}
-        <div className="week__cols">
+        <div key={`c${offset}`} className={dir ? `week__cols week-in week-in--${dir}` : "week__cols"}>
           {days.map((day, i) => {
             const key = dayKey(day);
             const isToday = key === todayKey;

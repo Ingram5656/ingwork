@@ -11,6 +11,7 @@ import {
   type WidgetSize,
 } from "./settings";
 import { IS_MAC } from "./platform";
+import { toggleSleep } from "./sleep/session";
 import { call, onEvent } from "./tauri";
 
 /** 小组件窗口的大小（逻辑像素）。四周各留 14 像素给投影。 */
@@ -195,6 +196,7 @@ export function initWindows(): void {
   onEvent<string>("tray-command", (command) => {
     if (command === "widget-toggle") toggleWidget();
     else if (command === "widget-lock") toggleWidgetLock();
+    else if (command === "sleep-toggle") toggleSleep();
   });
 }
 
