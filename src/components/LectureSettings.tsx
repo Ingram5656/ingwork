@@ -114,9 +114,9 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             onChange={(lectureAsk) => update({ lectureAsk })}
           />
         </Row>
-        <Row label={t("降噪：去掉空调、风扇这类一直响的声音")}>
+        <Row label={t("降噪（只用于麦克风）：去掉空调、风扇这类一直响的声音。声音本来就清楚时别开，会把人声削坏")}>
           <Toggle
-            label={t("降噪：去掉空调、风扇这类一直响的声音")}
+            label={t("降噪（只用于麦克风）：去掉空调、风扇这类一直响的声音。声音本来就清楚时别开，会把人声削坏")}
             on={s.lectureDenoise}
             onChange={(lectureDenoise) => update({ lectureDenoise })}
           />

@@ -355,6 +355,8 @@ fn spawn_recorder(
                 return;
             }
         };
+        // 降噪是给麦克风收音用的：电脑的声音本来就干净，降噪反而会把人声削坏，听写容易瞎编
+        let denoise = denoise && source == source::Source::Mic;
         crate::logger::info(&format!(
             "lecture input: {source:?}, {rate} Hz, denoise {denoise}"
         ));

@@ -824,7 +824,7 @@ export const EN: Record<string, string> = {
   "DeepSeek 不接受这次请求，跳过了": "DeepSeek rejected this request, so it was skipped",
   "等这句说完再翻译": "Waiting for the sentence to finish",
   "声音有点小，坐近一点或者换个麦克风": "It's a bit quiet. Sit closer or try another microphone",
-  "降噪：去掉空调、风扇这类一直响的声音": "Noise reduction: remove steady sounds like air conditioning and fans",
+  "降噪（只用于麦克风）：去掉空调、风扇这类一直响的声音。声音本来就清楚时别开，会把人声削坏": "Noise reduction (microphone only): removes steady sounds like air conditioning and fans. Leave it off when the sound is already clear, as it can distort speech",
   "课件": "Slides",
   "{n} 个术语": "{n} terms",
   "删掉 {name}": "Remove {name}",
