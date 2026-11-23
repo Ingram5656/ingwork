@@ -3,7 +3,7 @@
 //! 全部做完才替换左边的原文和右边的笔记，中途失败就保留原来的。
 
 use super::{
-    audio, audio_path, chat, lock, now_ms, record, stitch, summarize, transcribe, translate,
+    asr, asr_config, audio, audio_path, chat, lock, now_ms, record, stitch, summarize, translate,
     update, Fail, Lecture, Segment, Usage,
 };
 use tauri::{AppHandle, Manager};
@@ -69,12 +69,17 @@ pub(super) fn translate_all(
         .collect()
 }
 
-/// 听写一段，断网、DeepSeek 忙就多试几次
-pub(super) fn hear(key: &str, chunk: &audio::Chunk) -> Result<Option<(String, u64)>, String> {
+/// 听写一段，断网、DeepSeek 忙就多试几次。hint 是给 Whisper 的提示
+pub(super) fn hear(
+    key: &str,
+    config: &asr::Config,
+    chunk: &audio::Chunk,
+    hint: &str,
+) -> Result<Option<asr::Heard>, String> {
     let wav = audio::wav(&chunk.samples);
     let mut wait = 2;
     for _ in 0..6 {
-        match transcribe(key, &wav) {
+        match asr::transcribe(key, config, &wav, hint) {
             Ok(got) => return Ok(Some(got)),
             Err(Fail::Skip(_)) => return Ok(None),
             Err(Fail::Later(msg)) => {
@@ -131,6 +136,7 @@ fn run(app: &AppHandle, generation: u64) -> Result<(), String> {
         return Err("这台电脑上没有这节课的录音".into());
     }
     let block = glossary.prompt_block();
+    let config = asr_config(app);
     let mut usage = Usage::default();
     let mut cutter = audio::Cutter::with_limits(audio::detector(), audio::REDO);
     let mut assembler = stitch::Assembler::default();
@@ -155,10 +161,17 @@ fn run(app: &AppHandle, generation: u64) -> Result<(), String> {
         for chunk in ready {
             let until =
                 chunk.at + (chunk.samples.len() - chunk.overlap) as u64 * 1000 / audio::RATE as u64;
-            let Some((mut text, ms)) = hear(&key, &chunk)? else {
+            let hint = if config.groq() {
+                asr::hint(&session.course, &glossary.terms, &last_text)
+            } else {
+                String::new()
+            };
+            let Some(heard) = hear(&key, &config, &chunk, &hint)? else {
                 continue;
             };
-            usage.asr_ms += ms;
+            usage.asr_ms += heard.ms;
+            usage.groq_ms += heard.groq_ms;
+            let mut text = heard.text;
             if chunk.overlap > 0 {
                 text = stitch::dedupe(&last_text, &text);
             }
@@ -209,6 +222,7 @@ fn run(app: &AppHandle, generation: u64) -> Result<(), String> {
             at,
             en,
             zh: Some(zh),
+            unclear: false,
         })
         .collect();
     let (fresh, u) = summarize(&key, &block, &session, None, true).map_err(|e| match e {

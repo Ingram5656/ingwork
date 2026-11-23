@@ -48,17 +48,60 @@ fn tap_device(host: &cpal::Host, fail: &str) -> Result<cpal::Device, String> {
     Err(fail.to_string())
 }
 
-/// 打开声音来源：返回来源（得一直拿着）、单声道样本从哪儿来、采样率
-pub fn open(source: Source) -> Result<(Input, Receiver<Vec<f32>>, u32), String> {
+/// Mac 上录电脑声音时自己建的那个设备：只有本程序看得见，不算麦克风
+#[cfg(target_os = "macos")]
+const OWN_DEVICE: &str = "ingwork system audio";
+#[cfg(not(target_os = "macos"))]
+const OWN_DEVICE: &str = "";
+
+fn name_of(device: &cpal::Device) -> Option<String> {
+    let name = device.description().ok()?.name().trim().to_string();
+    (!name.is_empty() && name != OWN_DEVICE).then_some(name)
+}
+
+/// 这台电脑上的麦克风（名字），设置里选用哪个
+pub fn inputs() -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(devices) = cpal::default_host().input_devices() {
+        for name in devices.filter_map(|d| name_of(&d)) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// 按名字找麦克风。没找到（拔掉了、换了电脑）返回 None，外面退回系统默认的
+fn input_named(host: &cpal::Host, name: &str) -> Option<cpal::Device> {
+    let found = host
+        .input_devices()
+        .ok()?
+        .find(|d| name_of(d).as_deref() == Some(name));
+    if found.is_none() {
+        crate::logger::info("lecture input: chosen microphone not found, using the default");
+    }
+    found
+}
+
+/// 打开声音来源：返回来源（得一直拿着）、单声道样本从哪儿来、采样率。
+/// device 是设置里选的麦克风的名字，没选就用系统默认的
+pub fn open(
+    source: Source,
+    device: Option<&str>,
+) -> Result<(Input, Receiver<Vec<f32>>, u32), String> {
     let host = cpal::default_host();
     #[cfg(target_os = "macos")]
     let mut tap = None;
     let (device, config, fail) = match source {
         Source::Mic => {
             let fail = "麦克风打不开，请检查系统设置里是否允许 ingwork 使用麦克风";
-            let device = host.default_input_device().ok_or_else(|| {
-                "没找到麦克风，请检查有没有插好、系统设置里有没有关掉".to_string()
-            })?;
+            let device = device
+                .and_then(|name| input_named(&host, name.trim()))
+                .or_else(|| host.default_input_device())
+                .ok_or_else(|| {
+                    "没找到麦克风，请检查有没有插好、系统设置里有没有关掉".to_string()
+                })?;
             let config = device
                 .default_input_config()
                 .map_err(|_| fail.to_string())?;

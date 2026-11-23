@@ -2113,6 +2113,30 @@ html.is-widget #root {
   height: 38px;
 }
 
+/* 下拉选择（设置里选麦克风）：去掉系统自带的样子，右边画一个小箭头 */
+.field--select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  cursor: pointer;
+  color-scheme: dark;
+  text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.7) 50%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.7) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 16px,
+    calc(100% - 13px) 16px;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+}
+
+.field--select option {
+  color: #fff;
+  background: #2a2340;
+}
+
 /* 顶栏中间的小计时：不在"今天"页时显示 */
 .mini {
   display: flex;
@@ -5533,6 +5557,12 @@ html.is-island #root {
   font-size: 17px;
   line-height: 1.7;
   color: #fff;
+}
+
+/* 没听清的地方：一行小字，不抢眼 */
+.lec-seg__unclear {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .lec-seg__zh.is-pending {

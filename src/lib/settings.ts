@@ -147,6 +147,14 @@ export interface Settings {
   lectureSaveAudio: boolean;
   /** 听课录哪里的声音：麦克风，或者电脑正在放的声音（网课、回放） */
   lectureSource: "mic" | "system";
+  /** 用麦克风时用哪一个（设备的名字）。空的是系统默认的 */
+  lectureMic: string;
+  /** 听写用哪个：DeepSeek，或者 Groq 上的 Whisper（能指定语言、带术语提示，要另填密钥） */
+  lectureAsr: "deepseek" | "groq";
+  /** Groq 的密钥 */
+  lectureGroqKey: string;
+  /** 老师讲课的语言：英文（听成别的语言的算没听清），或者不限 */
+  lectureLanguage: "en" | "auto";
   /** 睡眠模式：雨量 0–100，0 是晴天 */
   sleepRain: number;
   /** 雨往哪边斜（度），-40 到 40 */
@@ -242,6 +250,10 @@ export const DEFAULT_SETTINGS: Settings = {
   lectureDenoise: false,
   lectureSaveAudio: false,
   lectureSource: "mic",
+  lectureMic: "",
+  lectureAsr: "deepseek",
+  lectureGroqKey: "",
+  lectureLanguage: "en",
   sleepRain: 45,
   sleepAngle: -8,
   sleepThunder: false,

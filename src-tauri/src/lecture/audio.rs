@@ -44,6 +44,15 @@ pub const LIVE: Limits = Limits {
     search: frames(3_000),
 };
 
+/// 边听边翻、用 Groq 的 Whisper 听写时：它一次请求最少按 10 秒算，段切长一点；
+/// Whisper 听长一点的段也更准。出字会晚两三秒
+pub const LIVE_LONG: Limits = Limits {
+    min_len: frames(8_000),
+    pause: frames(500),
+    max_len: frames(20_000),
+    search: frames(4_000),
+};
+
 /// 课后用录音重新听写：段长一点，听写的上下文多、更准
 pub const REDO: Limits = Limits {
     min_len: frames(20_000),
@@ -248,6 +257,7 @@ pub struct Cutter {
 }
 
 impl Cutter {
+    #[cfg(test)]
     pub fn new(vad: Box<dyn Vad>) -> Self {
         Self::with_limits(vad, LIVE)
     }

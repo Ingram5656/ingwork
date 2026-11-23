@@ -21,6 +21,8 @@ export interface Segment {
   en: string;
   /** 还在翻译是 null */
   zh: string | null;
+  /** 这里有人说话但没听清：en 是空的，没翻译、没进笔记（存了录音的话能点开听原声） */
+  unclear?: boolean;
 }
 
 export interface NotePoint {
@@ -63,19 +65,22 @@ export interface LectureNotes {
 export type LectureStatus = "idle" | "listening" | "paused" | "finishing" | "done" | "importing";
 
 export interface LectureUsage {
+  /** 送去 DeepSeek 听写的时长 */
   asrMs: number;
+  /** 送去 Groq 听写的时长（按它的算法：一次不到 10 秒算 10 秒） */
+  groqMs?: number;
   hit: number;
   miss: number;
   out: number;
 }
 
 /**
- * 大概花了多少美元。按 DeepSeek 标价的上限算（听写不算限时折扣、模型按高峰价），
- * 实际只会更少。价格变了改这里。
+ * 大概花了多少美元。按标价的上限算（DeepSeek 听写不算限时折扣、模型按高峰价；
+ * Groq 按付费价，在它的免费额度里其实不花钱），实际只会更少。价格变了改这里。
  */
 export function costOf(u: LectureUsage | undefined): number {
   if (!u) return 0;
-  const asr = (u.asrMs / 3_600_000) * 0.116;
+  const asr = (u.asrMs / 3_600_000) * 0.116 + ((u.groqMs ?? 0) / 3_600_000) * 0.111;
   const llm = (u.hit * 0.006 + u.miss * 0.3 + u.out * 1.2) / 1_000_000;
   return asr + llm;
 }
@@ -217,15 +222,28 @@ export function initLecture(): void {
   invoke<LectureState>("lecture_get")
     .then(receive)
     .catch(() => undefined);
-  // 设置里换了密钥：正在听的这节课也用新的
+  // 设置里换了密钥、听写方式：正在听的这节课也用新的
   let key = getSettings().lectureKey;
+  let asr = JSON.stringify(asrConfig());
+  call("lecture_set_asr", { asr: asrConfig() });
   subscribeSettings(() => {
     const next = getSettings().lectureKey;
     if (next !== key) {
       key = next;
       call("lecture_set_key", { key: next });
     }
+    const nextAsr = JSON.stringify(asrConfig());
+    if (nextAsr !== asr) {
+      asr = nextAsr;
+      call("lecture_set_asr", { asr: asrConfig() });
+    }
   });
+}
+
+/** 设置里选的听写方式：用哪个、Groq 的密钥、老师讲课的语言 */
+function asrConfig(): { engine: string; groqKey: string; language: string } {
+  const s = getSettings();
+  return { engine: s.lectureAsr, groqKey: s.lectureGroqKey.trim(), language: s.lectureLanguage };
 }
 
 /** 听了多久（毫秒），正在听的这一截也算上 */
@@ -249,6 +267,8 @@ export const lecture = {
       words: getPlanner().words.map((w) => w.word),
       saveAudio: getSettings().lectureSaveAudio,
       source: getSettings().lectureSource,
+      device: getSettings().lectureMic || null,
+      asr: asrConfig(),
     }).then(
       () => null,
       (e) => String(e),
@@ -270,13 +290,14 @@ export const lecture = {
       utcOffsetMin: -new Date().getTimezoneOffset(),
       words: getPlanner().words.map((w) => w.word),
       saveAudio: getSettings().lectureSaveAudio,
+      asr: asrConfig(),
     }).then(
       () => null,
       (e) => String(e),
     ),
   /** 下课后用录音重新整理一遍。不行的话返回中文说明 */
   redo: () =>
-    invoke("lecture_redo", { key: getSettings().lectureKey }).then(
+    invoke("lecture_redo", { key: getSettings().lectureKey, asr: asrConfig() }).then(
       () => null,
       (e) => String(e),
     ),
@@ -335,6 +356,7 @@ export function notesMarkdown(s: LectureState, withTranscript = false): string {
   if (withTranscript && s.segments.length) {
     lines.push("## 课堂原文和翻译", "");
     for (const seg of s.segments) {
+      if (seg.unclear) continue;
       const d = new Date(seg.at);
       const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
       lines.push(`**${time}** ${seg.en}`, "", seg.zh || "", "");

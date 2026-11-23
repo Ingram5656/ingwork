@@ -374,10 +374,16 @@ function Live({ s }: { s: LectureState }) {
                 <time className="lec-seg__time">{when(seg.at)}</time>
               )}
               <div className="lec-seg__body">
-                <p className="lec-seg__en" lang="en">
-                  {seg.en}
-                </p>
-                {seg.zh === null ? (
+                {seg.unclear ? null : (
+                  <p className="lec-seg__en" lang="en">
+                    {seg.en}
+                  </p>
+                )}
+                {seg.unclear ? (
+                  <p className="lec-seg__zh lec-seg__unclear">
+                    {canPlay ? t("这里没听清，没有写进笔记。点左边的时刻可以听原声。") : t("这里没听清，没有写进笔记。")}
+                  </p>
+                ) : seg.zh === null ? (
                   <p className="lec-seg__zh is-pending">{t("翻译中")}</p>
                 ) : seg.zh === "" ? (
                   <p className="lec-seg__zh is-pending">{t("这一段没翻译出来")}</p>

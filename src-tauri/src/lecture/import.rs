@@ -6,8 +6,8 @@
 
 use super::glossary::Glossary;
 use super::{
-    audio, audio_path, busy, lock, now_ms, publish, record, redo, save_current, spawn_summary,
-    stitch, update, Inner, Lecture, Segment, Session, Status, Usage,
+    asr, asr_config, audio, audio_path, busy, lock, now_ms, publish, record, redo, save_current,
+    spawn_summary, stitch, update, Inner, Lecture, Segment, Session, Status, Usage,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -139,6 +139,7 @@ fn emit(
                 at,
                 en,
                 zh: Some(zh),
+                unclear: false,
             });
             *next_id += 1;
         }
@@ -153,7 +154,7 @@ fn run(
     save: bool,
 ) -> Result<(), String> {
     let mut d = open_file(&path)?;
-    let (key, glossary, started) = {
+    let (key, glossary, started, course) = {
         let inner = lock(&app.state::<Lecture>().inner().0);
         if inner.generation != generation {
             return Err(String::new());
@@ -162,9 +163,11 @@ fn run(
             inner.key.clone(),
             inner.glossary.clone(),
             inner.s.started_at.unwrap_or_else(now_ms),
+            inner.s.course.clone(),
         )
     };
     let block = glossary.prompt_block();
+    let config = asr_config(app);
     let mut resampler = audio::Resampler::new(d.rate, audio::RATE);
     let mut cutter = audio::Cutter::with_limits(audio::detector(), audio::REDO);
     let mut writer = if save {
@@ -217,6 +220,8 @@ fn run(
                 app,
                 generation,
                 &key,
+                &config,
+                &course,
                 &glossary,
                 &chunk,
                 &mut last_text,
@@ -265,6 +270,8 @@ fn run(
             app,
             generation,
             &key,
+            &config,
+            &course,
             &glossary,
             &chunk,
             &mut last_text,
@@ -304,6 +311,8 @@ fn hear_one(
     app: &AppHandle,
     generation: u64,
     key: &str,
+    config: &asr::Config,
+    course: &str,
     glossary: &Glossary,
     chunk: &audio::Chunk,
     last_text: &mut String,
@@ -311,10 +320,17 @@ fn hear_one(
     queue: &mut Vec<(u64, String)>,
     usage: &mut Usage,
 ) -> Result<bool, String> {
-    let Some((mut text, ms)) = redo::hear(key, chunk)? else {
+    let hint = if config.groq() {
+        asr::hint(course, &glossary.terms, last_text)
+    } else {
+        String::new()
+    };
+    let Some(heard) = redo::hear(key, config, chunk, &hint)? else {
         return Ok(true);
     };
-    usage.asr_ms += ms;
+    usage.asr_ms += heard.ms;
+    usage.groq_ms += heard.groq_ms;
+    let mut text = heard.text;
     if chunk.overlap > 0 {
         text = stitch::dedupe(last_text, &text);
     }
@@ -345,7 +361,9 @@ pub fn lecture_import(
     utc_offset_min: Option<i32>,
     words: Option<Vec<String>>,
     save_audio: Option<bool>,
+    asr: Option<asr::Config>,
 ) -> Result<bool, String> {
+    super::set_asr(&lecture, asr);
     let key = key.trim().to_string();
     if key.is_empty() {
         return Err("先在设置的\u{201c}听课\u{201d}里填 DeepSeek 密钥".into());

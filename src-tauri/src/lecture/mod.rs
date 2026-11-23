@@ -1,16 +1,18 @@
-//! 听课：麦克风录下老师讲的话，交给 DeepSeek 一段一段听写成英文、翻成中文；
+//! 听课：麦克风录下老师讲的话，一段一段听写成英文（DeepSeek，或者 Groq 上的 Whisper，见 asr.rs）、
+//! 交给 DeepSeek 翻成中文；
 //! 听课中每 5 分钟左右整理一次提纲，下课后从头到尾完整整理成笔记。
 //!
 //! 三条线：
 //! - 录音线程：开麦克风，换成 16 kHz（可以先降噪），判断有没有人说话、按停顿切段（audio.rs），
 //!   每 0.1 秒把音量发给界面（音量带）。切好的段交给处理线程。
-//! - 处理线程：按顺序送去听写（DeepSeek 的语音识别）；断网时攒着，恢复后几段合成一次送。
+//! - 处理线程：按顺序送去听写；断网时攒着，恢复后几段合成一次送。
 //!   听写回来去掉和上一段重叠的词、过滤听写幻觉，拼成整句再翻译（stitch.rs，deepseek-flash）。
 //! - 整理：每 5 分钟另开一个线程整理一版提纲；下课时处理完最后一段，再完整整理一遍。
 //!
 //! 录音不存，只存文字：每节课一个文件，放在数据文件夹的 lectures/ 里，几台电脑同步。
 //! 状态每变一次就把整份发给界面（lecture-state），界面只管画。
 
+mod asr;
 mod audio;
 // 命令要用完整路径登记（tauri 的命令宏不跟着 pub use 走），所以这个模块是 pub
 pub mod course;
@@ -21,9 +23,9 @@ pub mod import;
 mod record;
 mod redo;
 mod source;
+mod stitch;
 #[cfg(target_os = "macos")]
 mod systap;
-mod stitch;
 
 use glossary::Glossary;
 use notes::Notes;
@@ -38,7 +40,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-const ASR_URL: &str = "https://api.deepseek.com/v1/tools/asr";
 const CHAT_URL: &str = "https://api.deepseek.com/chat/completions";
 const BALANCE_URL: &str = "https://api.deepseek.com/user/balance";
 const PLATFORM_URL: &str = "https://platform.deepseek.com/";
@@ -69,6 +70,9 @@ pub struct Segment {
     en: String,
     /// 还在翻译是 null；翻译失败是空字符串
     zh: Option<String>,
+    /// 这里有人说话但没听清（听写出来的不可信，没有写进来）：en 是空的，不翻译、不进笔记
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unclear: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,8 +113,10 @@ pub struct Session {
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Usage {
-    /// 送去听写的声音有多长（毫秒）
+    /// 送去 DeepSeek 听写的声音有多长（毫秒）
     asr_ms: u64,
+    /// 送去 Groq 听写的（毫秒，按它的算法：一次不到 10 秒算 10 秒）
+    groq_ms: u64,
     /// 输入里命中缓存的字数（token）
     hit: u64,
     /// 输入里没命中缓存的
@@ -122,6 +128,7 @@ pub struct Usage {
 impl Usage {
     fn add(&mut self, other: Usage) {
         self.asr_ms += other.asr_ms;
+        self.groq_ms += other.groq_ms;
         self.hit += other.hit;
         self.miss += other.miss;
         self.out += other.out;
@@ -234,8 +241,21 @@ impl Default for Inner {
     }
 }
 
+/// 第二项是设置里选的听写方式（用哪个、Groq 的密钥、讲课语言）：换课不清掉
 #[derive(Default)]
-pub struct Lecture(Mutex<Inner>);
+pub struct Lecture(Mutex<Inner>, Mutex<asr::Config>);
+
+fn asr_config(app: &AppHandle) -> asr::Config {
+    lock(&app.state::<Lecture>().inner().1).clone()
+}
+
+/// 界面把设置里的听写方式带过来：记下。换了就马上再试 Groq（可能是刚改好密钥）
+fn set_asr(lecture: &Lecture, config: Option<asr::Config>) {
+    if let Some(config) = config {
+        *lock(&lecture.1) = config;
+        asr::resume_groq();
+    }
+}
 
 fn view(inner: &Inner) -> serde_json::Value {
     serde_json::to_value(View {
@@ -340,12 +360,14 @@ fn spawn_recorder(
     paused: Arc<AtomicBool>,
     denoise: bool,
     source: source::Source,
+    device: Option<String>,
+    limits: audio::Limits,
     audio_file: Option<PathBuf>,
     jobs: Sender<Job>,
 ) -> Result<(), String> {
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     std::thread::spawn(move || {
-        let (stream, samples, rate) = match source::open(source) {
+        let (stream, samples, rate) = match source::open(source, device.as_deref()) {
             Ok(v) => {
                 let _ = ready_tx.send(Ok(()));
                 v
@@ -373,7 +395,7 @@ fn spawn_recorder(
             update(&app, generation, |inner| inner.audio_here = true);
         }
         let mut need_mark = true;
-        let mut cutter = audio::Cutter::new(audio::detector());
+        let mut cutter = audio::Cutter::with_limits(audio::detector(), limits);
         let mut out = Vec::new();
         let mut was_paused = false;
         let mut quiet_at = Instant::now();
@@ -501,39 +523,6 @@ fn status_fail(code: u16) -> Fail {
     }
 }
 
-/// 听写一段：返回文字和这段声音的时长（毫秒）
-fn transcribe(key: &str, wav: &[u8]) -> Result<(String, u64), Fail> {
-    let part = reqwest::blocking::multipart::Part::bytes(wav.to_vec())
-        .file_name("speech.wav")
-        .mime_str("audio/wav")
-        .map_err(|_| Fail::Skip("有一段声音没听写出来，跳过了".into()))?;
-    let form = reqwest::blocking::multipart::Form::new().part("file", part);
-    let resp = client(60)
-        .post(ASR_URL)
-        .bearer_auth(key)
-        .multipart(form)
-        .send()
-        .map_err(|_| Fail::Later("DeepSeek 暂时连不上，录下来的先攒着，连上了会自动补上".into()))?;
-    if !resp.status().is_success() {
-        return Err(status_fail(resp.status().as_u16()));
-    }
-    let v: serde_json::Value = resp
-        .json()
-        .map_err(|_| Fail::Skip("有一段声音没听写出来，跳过了".into()))?;
-    let text = v
-        .get("text")
-        .and_then(|t| t.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    // 接口没给时长就按 WAV 的大小算（16 kHz、16 位：每毫秒 32 字节）
-    let ms = v
-        .get("duration_ms")
-        .and_then(|d| d.as_u64())
-        .unwrap_or((wav.len().saturating_sub(44) / 32) as u64);
-    Ok((text, ms))
-}
-
 /// DeepSeek 实际用的是哪个模型：变了就记一笔日志，方便查问题
 fn note_model(v: &serde_json::Value) {
     static LAST: Mutex<String> = Mutex::new(String::new());
@@ -559,10 +548,10 @@ fn usage_of(v: &serde_json::Value) -> Usage {
         m => m,
     };
     Usage {
-        asr_ms: 0,
         hit,
         miss,
         out: n("completion_tokens"),
+        ..Usage::default()
     }
 }
 
@@ -660,6 +649,7 @@ fn summarize(
     let lines = notes::transcript(
         session.segments[from..]
             .iter()
+            .filter(|s| !s.unclear)
             .map(|s| (s.id, s.at, s.en.as_str())),
         off,
         base,
@@ -673,7 +663,12 @@ fn summarize(
         final_pass,
     );
     let (out, usage) = chat(key, &system, &user, true, 240)?;
-    let mut valid: Vec<u64> = session.segments.iter().map(|s| s.id).collect();
+    let mut valid: Vec<u64> = session
+        .segments
+        .iter()
+        .filter(|s| !s.unclear)
+        .map(|s| s.id)
+        .collect();
     valid.sort_unstable();
     let notes = notes::parse(&out, &date, &valid)
         .ok_or_else(|| Fail::Later("笔记没整理出来，稍后再试".into()))?;
@@ -755,13 +750,22 @@ fn emit_sentence(
 ) -> bool {
     let mut context = Vec::new();
     let alive = update(app, generation, |inner| {
-        let n = inner.s.segments.len();
-        context = inner.s.segments[n.saturating_sub(3)..].to_vec();
+        context = inner
+            .s
+            .segments
+            .iter()
+            .rev()
+            .filter(|s| !s.unclear)
+            .take(3)
+            .rev()
+            .cloned()
+            .collect();
         inner.s.segments.push(Segment {
             id,
             at,
             en: en.clone(),
             zh: None,
+            unclear: false,
         });
     });
     if !alive {
@@ -846,14 +850,19 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                     Job::Finish => finishing = true,
                 }
             }
-            let (key, glossary) = {
+            let (key, glossary, course) = {
                 let inner = lock(&app.state::<Lecture>().inner().0);
                 if inner.generation != generation {
                     return;
                 }
-                (inner.key.clone(), inner.glossary.clone())
+                (
+                    inner.key.clone(),
+                    inner.glossary.clone(),
+                    inner.s.course.clone(),
+                )
             };
             let block = glossary.prompt_block();
+            let config = asr_config(&app);
 
             if queue.is_empty() {
                 // 半句话等太久，或者下课了：不等了
@@ -887,10 +896,15 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
             let overlap = queue[0].overlap > 0;
             let quiet = queue.iter().take(count).any(|c| c.quiet);
 
-            let heard = match transcribe(&key, &audio::wav(&merged)) {
-                Ok((text, ms)) => {
+            let hint = if config.groq() {
+                asr::hint(&course, &glossary.terms, &last_text)
+            } else {
+                String::new()
+            };
+            let heard = match asr::transcribe(&key, &config, &audio::wav(&merged), &hint) {
+                Ok(heard) => {
                     wait = 2;
-                    Some((text, ms))
+                    Some(heard)
                 }
                 Err(Fail::Skip(msg)) => {
                     update(&app, generation, |inner| inner.error = Some(msg));
@@ -910,7 +924,11 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                 }
             };
             queue.drain(..count);
-            let mut text = heard.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+            let mut text = heard.as_ref().map(|h| h.text.clone()).unwrap_or_default();
+            // 有人说话但没听清：左边留一个记号（能点开听原声），不翻译、不进笔记
+            let unclear = heard.as_ref().is_some_and(|h| h.unclear);
+            let note = heard.as_ref().and_then(|h| h.note.clone());
+            let via_groq = heard.as_ref().is_some_and(|h| h.groq_ms > 0);
             if overlap && !text.is_empty() {
                 text = stitch::dedupe(&last_text, &text);
             }
@@ -922,21 +940,36 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
             }
             let sentence = if keep {
                 assembler.push(&text, at, now_ms())
+            } else if unclear {
+                // 没听清的地方前后接不上：攒着的半句先出来，记号排在它后面
+                assembler.flush()
             } else {
                 None
             };
             let pending = assembler.pending().map(|(at, en)| Pending { at, en });
             let alive = update(&app, generation, |inner| {
-                if let Some((_, ms)) = &heard {
-                    inner.s.usage.asr_ms += ms;
+                if let Some(h) = &heard {
+                    inner.s.usage.asr_ms += h.ms;
+                    inner.s.usage.groq_ms += h.groq_ms;
                 }
                 inner.queued = inner.queued.saturating_sub(count);
                 inner.retrying = false;
                 inner.quiet = quiet;
-                if inner.error.as_deref().is_some_and(|e| {
-                    e.contains("连不上") || e.contains("余额") || e.contains("密钥")
-                }) {
+                // Groq 的提示留着（"先用 DeepSeek 听写"），等它恢复了再去掉
+                let about_groq = inner
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("Groq"));
+                if (about_groq && via_groq)
+                    || (!about_groq
+                        && inner.error.as_deref().is_some_and(|e| {
+                            e.contains("连不上") || e.contains("余额") || e.contains("密钥")
+                        }))
+                {
                     inner.error = None;
+                }
+                if let Some(note) = note {
+                    inner.error = Some(note);
                 }
                 inner.pending = pending;
             });
@@ -950,6 +983,22 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
                     spawn_summary(app.clone(), generation, false);
                 }
             }
+            if unclear {
+                let id = next_id;
+                next_id += 1;
+                update(&app, generation, |inner| {
+                    // 连着几段都没听清只留一个记号
+                    if !inner.s.segments.last().is_some_and(|s| s.unclear) {
+                        inner.s.segments.push(Segment {
+                            id,
+                            at,
+                            en: String::new(),
+                            zh: Some(String::new()),
+                            unclear: true,
+                        });
+                    }
+                });
+            }
             // 隔几句存一次，中途关掉软件也丢不了多少
             let count = lock(&app.state::<Lecture>().inner().0).s.segments.len();
             if count >= saved_at + 6 {
@@ -960,10 +1009,11 @@ fn spawn_worker(app: AppHandle, generation: u64, jobs: Receiver<Job>) {
 
         // 下课：存一下，再完整整理
         save_current(&app, generation);
-        let empty = lock(&app.state::<Lecture>().inner().0)
+        let empty = !lock(&app.state::<Lecture>().inner().0)
             .s
             .segments
-            .is_empty();
+            .iter()
+            .any(|s| !s.unclear);
         if empty {
             update(&app, generation, |inner| {
                 inner.status = Status::Done;
@@ -993,6 +1043,7 @@ pub fn lecture_get(lecture: State<Lecture>) -> serde_json::Value {
 
 /// 开始听：开麦克风、起处理线程
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn lecture_start(
     app: AppHandle,
     lecture: State<Lecture>,
@@ -1004,7 +1055,10 @@ pub fn lecture_start(
     words: Option<Vec<String>>,
     save_audio: Option<bool>,
     source: Option<String>,
+    device: Option<String>,
+    asr: Option<asr::Config>,
 ) -> Result<(), String> {
+    set_asr(&lecture, asr);
     let key = key.trim().to_string();
     if key.is_empty() {
         return Err("先在设置的\u{201c}听课\u{201d}里填 DeepSeek 密钥".into());
@@ -1064,6 +1118,13 @@ pub fn lecture_start(
         paused,
         denoise.unwrap_or(false),
         source::Source::parse(source.as_deref()),
+        device.filter(|d| !d.trim().is_empty()),
+        // Groq 一次请求最少按 10 秒算：段切长一点，不多花钱，Whisper 听长一点的也更准
+        if asr_config(&app).groq() {
+            audio::LIVE_LONG
+        } else {
+            audio::LIVE
+        },
         audio_file,
         tx,
     ) {
@@ -1169,7 +1230,10 @@ pub fn lecture_close(app: AppHandle, lecture: State<Lecture>) {
 pub fn lecture_summarize(app: AppHandle, lecture: State<Lecture>, key: String) {
     let generation = {
         let mut inner = lock(&lecture.0);
-        if inner.status != Status::Done || inner.s.segments.is_empty() || inner.redo.is_some() {
+        if inner.status != Status::Done
+            || !inner.s.segments.iter().any(|s| !s.unclear)
+            || inner.redo.is_some()
+        {
             return;
         }
         if !key.trim().is_empty() {
@@ -1188,6 +1252,21 @@ pub fn lecture_set_key(lecture: State<Lecture>, key: String) {
     if !key.is_empty() {
         lock(&lecture.0).key = key.to_string();
     }
+}
+
+/// 设置里换了听写方式（用哪个、Groq 的密钥、讲课语言）：正在听的这节课从下一段起也换上
+#[tauri::command]
+pub fn lecture_set_asr(lecture: State<Lecture>, asr: asr::Config) {
+    set_asr(&lecture, Some(asr));
+}
+
+/// 这台电脑上有哪些麦克风（设置里选用哪个）
+#[tauri::command(async)]
+pub fn lecture_inputs() -> Vec<String> {
+    // 列设备可能要等系统，另开一个线程，别卡住别的命令
+    std::thread::spawn(source::inputs)
+        .join()
+        .unwrap_or_default()
 }
 
 /// 打开以前的一份笔记
@@ -1268,7 +1347,12 @@ pub fn lecture_list(app: AppHandle) -> Vec<Entry> {
             .as_ref()
             .map(|n| n.summary.clone())
             .filter(|t| !t.is_empty())
-            .or_else(|| s.segments.first().and_then(|seg| seg.zh.clone()))
+            .or_else(|| {
+                s.segments
+                    .iter()
+                    .find(|seg| !seg.unclear)
+                    .and_then(|seg| seg.zh.clone())
+            })
             .unwrap_or_default()
             .chars()
             .take(80)
@@ -1339,27 +1423,43 @@ fn check_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 在浏览器里打开 DeepSeek 开放平台
+/// 试一下 Groq 的密钥
+#[tauri::command(async)]
+pub fn lecture_check_groq_key(key: String) -> Result<(), String> {
+    std::thread::spawn(move || asr::check_groq_key(key.trim()))
+        .join()
+        .unwrap_or_else(|_| Err("Groq 暂时连不上，稍后再试".into()))
+}
+
+/// 在浏览器里打开 DeepSeek 开放平台；site 是 "groq" 就打开 Groq 建密钥的那一页
 #[tauri::command]
-pub fn lecture_open_platform() -> Result<(), String> {
+pub fn lecture_open_platform(site: Option<String>) -> Result<(), String> {
+    let groq = site.as_deref() == Some("groq");
+    let url = if groq { asr::GROQ_SITE } else { PLATFORM_URL };
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(PLATFORM_URL).spawn();
+    let result = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("explorer")
-        .arg(PLATFORM_URL)
-        .spawn();
+    let result = std::process::Command::new("explorer").arg(url).spawn();
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let result = std::process::Command::new("xdg-open")
-        .arg(PLATFORM_URL)
-        .spawn();
-    result
-        .map(|_| ())
-        .map_err(|_| "没能打开浏览器，请自己打开 platform.deepseek.com".to_string())
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
+    result.map(|_| ()).map_err(|_| {
+        if groq {
+            "没能打开浏览器，请自己打开 console.groq.com".to_string()
+        } else {
+            "没能打开浏览器，请自己打开 platform.deepseek.com".to_string()
+        }
+    })
 }
 
 /// 下课后用录音重新整理一遍（只在录了音的那台电脑上能用）
 #[tauri::command]
-pub fn lecture_redo(app: AppHandle, lecture: State<Lecture>, key: String) -> Result<(), String> {
+pub fn lecture_redo(
+    app: AppHandle,
+    lecture: State<Lecture>,
+    key: String,
+    asr: Option<asr::Config>,
+) -> Result<(), String> {
+    set_asr(&lecture, asr);
     let generation = {
         let mut inner = lock(&lecture.0);
         if inner.status != Status::Done || busy(&inner) || inner.summarizing {
