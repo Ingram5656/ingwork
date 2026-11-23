@@ -750,6 +750,7 @@ fn emit_sentence(
 ) -> bool {
     let mut context = Vec::new();
     let alive = update(app, generation, |inner| {
+        // 前面三句（没听清的记号不算）
         context = inner
             .s
             .segments
@@ -757,9 +758,9 @@ fn emit_sentence(
             .rev()
             .filter(|s| !s.unclear)
             .take(3)
-            .rev()
             .cloned()
             .collect();
+        context.reverse();
         inner.s.segments.push(Segment {
             id,
             at,
