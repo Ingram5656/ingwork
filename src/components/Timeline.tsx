@@ -197,7 +197,7 @@ export function Timeline({ onOpenSchedule }: Props) {
         })}
 
         {gaps.map((gap) => {
-          const n = pomodorosIn(gap, settings.focusMin, settings.shortMin, settings.classLead);
+          const n = pomodorosIn(gap, settings.focusMin, settings.shortMin, settings.travelMin);
           const tall = y(gap.end) - y(gap.start);
           if (tall < 18) return null;
           return (

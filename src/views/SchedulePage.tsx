@@ -243,7 +243,7 @@ function CourseForm({
             </button>
           </>
         ) : null}
-        <button type="button" className="btn btn--primary btn--sm" onClick={() => void save()}>
+        <button type="button" className="btn btn--primary cform__save" onClick={() => void save()}>
           {editing ? t("保存修改") : t("加上这节课")}
         </button>
       </div>
@@ -730,7 +730,7 @@ export function SchedulePage({ confirm, closeConfirm }: Props) {
             {courses.length > 0 ? t("课表里有 {n} 节课", { n: courses.length }) : t("还没有课")}
           </span>
           {courses.length > 0 ? (
-            <button type="button" className="btn btn--ghost btn--sm" onClick={askClear}>
+            <button type="button" className="sch__clear" onClick={askClear}>
               {t("清空课表")}
             </button>
           ) : null}

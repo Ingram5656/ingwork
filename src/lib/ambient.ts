@@ -22,10 +22,39 @@ const NAMES: Record<string, string> = {
   stream: "溪流",
   night: "夏夜",
   thunder: "雷雨",
-  birds: "鸟鸣",
+  birds: "鸟声",
   train: "火车",
   library: "图书馆",
 };
+
+/** 列出来的顺序：自然的声音在前，白噪音、褐噪音在后；不认识的排在中间。专注和睡眠模式两处用同一个顺序 */
+const ORDER = [
+  "rain",
+  "thunder",
+  "waves",
+  "stream",
+  "wind",
+  "birds",
+  "forest",
+  "night",
+  "fire",
+  "cafe",
+  "library",
+  "traffic",
+  "train",
+];
+const NOISE = ["white", "brown"];
+
+function rank(id: string): number {
+  const noise = NOISE.indexOf(id);
+  if (noise >= 0) return 1000 + noise;
+  const known = ORDER.indexOf(id);
+  return known >= 0 ? known : 500;
+}
+
+export function sortAmbient<T>(items: T[], idOf: (item: T) => string): T[] {
+  return [...items].sort((a, b) => rank(idOf(a)) - rank(idOf(b)) || idOf(a).localeCompare(idOf(b)));
+}
 
 export function ambientName(id: string): string {
   return id in NAMES ? t(NAMES[id]) : id;

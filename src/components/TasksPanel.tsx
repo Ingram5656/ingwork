@@ -58,7 +58,10 @@ function Stepper({
       >
         <IconMinus />
       </button>
-      <span className="stepper__value">{value}</span>
+      <span className="stepper__value">
+        {value}
+        <span className="stepper__unit">{t("个番茄")}</span>
+      </span>
       <button
         type="button"
         className="stepper__btn"

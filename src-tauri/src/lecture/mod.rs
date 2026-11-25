@@ -176,6 +176,10 @@ pub struct Entry {
     started_at: u64,
     listened_ms: u64,
     summary: String,
+    /// 这节课用了多少（算这个月一共花了多少）
+    usage: Usage,
+    /// 这台电脑上这节课的录音有多大（字节），没有是 0
+    audio_bytes: u64,
 }
 
 enum Job {
@@ -1209,6 +1213,75 @@ pub fn lecture_stop(app: AppHandle, lecture: State<Lecture>) {
     publish(&app);
 }
 
+/// 只删这节课的录音，笔记留着
+#[tauri::command]
+pub fn lecture_delete_audio(
+    app: AppHandle,
+    lecture: State<Lecture>,
+    id: String,
+) -> Result<(), String> {
+    let id = safe_id(&id)?;
+    {
+        let mut inner = lock(&lecture.0);
+        if inner.s.id.as_deref() == Some(id) {
+            if busy(&inner) {
+                return Err("这节课还在听或者正在用录音整理，等它结束再删".into());
+            }
+            inner.audio_here = false;
+        }
+    }
+    let path = audio_path(&app, id);
+    let gone = if path.exists() {
+        std::fs::remove_file(&path)
+    } else {
+        Ok(())
+    };
+    publish(&app);
+    gone.map_err(|_| "没删掉，录音可能正在播放，停下再试".to_string())
+}
+
+/// 备份用：所有课的笔记，原样的 JSON（录音不算，太大）
+pub fn export_all(app: &AppHandle) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    let Ok(dir) = std::fs::read_dir(folder(app)) else {
+        return out;
+    };
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            out.push(value);
+        }
+    }
+    out
+}
+
+/// 备份导回来：这边没有的笔记才写进来，已经有的不动。返回写进来几份
+pub fn import_all(app: &AppHandle, sessions: &[serde_json::Value]) -> usize {
+    let dir = folder(app);
+    let mut added = 0;
+    for value in sessions {
+        // 读得懂、编号也正常的才收
+        let Ok(session) = serde_json::from_value::<Session>(value.clone()) else {
+            continue;
+        };
+        let Some(id) = session.id.as_deref().and_then(|id| safe_id(id).ok()) else {
+            continue;
+        };
+        if dir.join(format!("{id}.json")).exists() {
+            continue;
+        }
+        save(app, &session);
+        added += 1;
+    }
+    added
+}
+
 /// 看完了：回到"要听哪节课"
 #[tauri::command]
 pub fn lecture_close(app: AppHandle, lecture: State<Lecture>) {
@@ -1358,12 +1431,17 @@ pub fn lecture_list(app: AppHandle) -> Vec<Entry> {
             .chars()
             .take(80)
             .collect();
+        let audio_bytes = std::fs::metadata(audio_path(&app, &id))
+            .map(|m| m.len())
+            .unwrap_or(0);
         out.push(Entry {
             id,
             course: s.course,
             started_at,
             listened_ms: s.listened_ms,
             summary,
+            usage: s.usage,
+            audio_bytes,
         });
     }
     out.sort_by(|a, b| b.started_at.cmp(&a.started_at));

@@ -38,7 +38,7 @@ import { StatsPanel } from "../components/StatsPanel";
 import { TasksPanel } from "../components/TasksPanel";
 import { Timeline } from "../components/Timeline";
 import { GapHint, InboxCard, NextClassCard, WordReview } from "../components/TodayCards";
-import { initAmbient, toggleAmbient } from "../lib/ambient";
+import { initAmbient, setAmbientPreview, toggleAmbient } from "../lib/ambient";
 import { setBackgroundError, useBackgroundUrl } from "../lib/background";
 import { t, useLang } from "../lib/i18n";
 import { useIdle, useStageScale } from "../lib/motion";
@@ -60,7 +60,7 @@ import { initTimer, initTimerConfig, timer, useCountdown, useTimer } from "../li
 import { checkUpdate, useUpdate } from "../lib/update";
 import { initWindows, toggleFullscreen, toggleWidget } from "../lib/windows";
 import { LecturePage } from "./LecturePage";
-import { LectureAsk } from "../components/LectureAsk";
+import { LectureAsk, LectureEndAsk } from "../components/LectureAsk";
 import { ReviewPage } from "./ReviewPage";
 import { SchedulePage } from "./SchedulePage";
 
@@ -298,6 +298,30 @@ export function MainView() {
 
   // ---------- 操作 ----------
 
+  // 环境音只在计时走着的时候响。没在计时就点开，按钮亮了却没声音，像坏了：
+  // 先放几秒给人听听，再说一句什么时候才会一直放
+  const [ambientHint, setAmbientHint] = useState(false);
+  const ambientTimer = useRef<number | null>(null);
+  const stopAmbientTaste = useCallback(() => {
+    if (ambientTimer.current === null) return;
+    window.clearTimeout(ambientTimer.current);
+    ambientTimer.current = null;
+    setAmbientPreview(false);
+    setAmbientHint(false);
+  }, []);
+  const onAmbient = () => {
+    const turningOn = !settings.ambientOn;
+    stopAmbientTaste();
+    toggleAmbient();
+    const audible = state.running && (state.phase === "focus" || settings.ambientInBreaks);
+    if (turningOn && !audible) {
+      setAmbientPreview(true);
+      setAmbientHint(true);
+      ambientTimer.current = window.setTimeout(stopAmbientTaste, 5000);
+    }
+  };
+  useEffect(() => stopAmbientTaste, [stopAmbientTaste]);
+
   /** 会丢掉这一段专注进度的操作，先问一句。休息不用问。 */
   const guard = useCallback(
     (title: string, body: string, confirm: string, action: () => void) => {
@@ -493,10 +517,13 @@ export function MainView() {
               setSettingsCategory("lecture");
               setSettingsOpen(true);
             }}
+            confirm={openSheet}
+            closeConfirm={closeSheet}
           />
         ) : null}
 
         <LectureAsk hidden={page === "lecture" || sleep.open} onStarted={() => goTo("lecture")} />
+        <LectureEndAsk hidden={sleep.open} />
 
         {page === "review" ? (
           <ReviewPage onOpenHistory={() => setHistoryOpen(true)} confirm={openSheet} closeConfirm={closeSheet} />
@@ -537,16 +564,23 @@ export function MainView() {
             >
               <IconInbox />
             </button>
-            <button
-              type="button"
-              className={settings.ambientOn ? "ibtn is-on" : "ibtn"}
-              title={settings.ambientOn ? t("关掉环境音") : t("专注时播放环境音")}
-              aria-label={settings.ambientOn ? t("关掉环境音") : t("专注时播放环境音")}
-              aria-pressed={settings.ambientOn}
-              onClick={toggleAmbient}
-            >
-              <IconWaves />
-            </button>
+            <span className="ibtn-wrap">
+              <button
+                type="button"
+                className={settings.ambientOn ? "ibtn is-on" : "ibtn"}
+                title={settings.ambientOn ? t("关掉环境音") : t("专注时播放环境音")}
+                aria-label={settings.ambientOn ? t("关掉环境音") : t("专注时播放环境音")}
+                aria-pressed={settings.ambientOn}
+                onClick={onAmbient}
+              >
+                <IconWaves />
+              </button>
+              {ambientHint ? (
+                <span className="ibtn-tip" role="status">
+                  {t("先放几秒给你听听，专注开始后才会一直放")}
+                </span>
+              ) : null}
+            </span>
             <button
               type="button"
               className="ibtn"

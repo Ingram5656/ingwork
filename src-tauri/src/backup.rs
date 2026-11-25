@@ -1,4 +1,4 @@
-//! 备份：把待办、课表（课、截止日期、杂念、生词、排进空档的段）、专注记录存成一个文件，
+//! 备份：把待办、课表（课、截止日期、杂念、生词、排进空档的段）、专注记录、听课笔记存成一个文件，
 //! 换电脑或者数据出了问题时再导回来。
 //!
 //! 导回来是"并进来"，不是覆盖：两边都有的条目按修改时间取新的，备份里没有的不会被删掉。
@@ -25,6 +25,9 @@ struct Backup {
     planner: planner::Store,
     #[serde(default)]
     history: Vec<stats::Record>,
+    /// 听课笔记（每节课一份，录音不算）。0.7.0 以前的备份里没有
+    #[serde(default)]
+    lectures: Vec<serde_json::Value>,
 }
 
 /// 导回来以后告诉界面导了多少
@@ -34,6 +37,8 @@ pub struct Restored {
     tasks: usize,
     courses: usize,
     history: usize,
+    /// 新写进来的听课笔记有几份（这边已经有的不算）
+    lectures: usize,
 }
 
 fn now_ms() -> u64 {
@@ -69,6 +74,7 @@ pub async fn backup_export(app: AppHandle) -> Result<bool, String> {
         tasks: app.state::<tasks::Tasks>().snapshot(),
         planner: app.state::<planner::Planner>().snapshot(),
         history: stats::export_records(&app),
+        lectures: crate::lecture::export_all(&app),
     };
     let text = serde_json::to_string_pretty(&backup)
         .map_err(|_| "备份没写出来，请再试一次".to_string())?;
@@ -119,11 +125,13 @@ pub async fn backup_import(app: AppHandle) -> Result<Option<Restored>, String> {
     let planner_store = app.state::<planner::Planner>().absorb(&backup.planner)?;
     planner::announce(&app, &planner_store);
     let history = stats::import_records(&app, &backup.history)?;
+    let lectures = crate::lecture::import_all(&app, &backup.lectures);
     crate::logger::info(&format!("restored backup from {}", backup.version));
     Ok(Some(Restored {
         tasks: backup.tasks.tasks.len(),
         courses: backup.planner.courses.len(),
         history,
+        lectures,
     }))
 }
 

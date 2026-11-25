@@ -4,12 +4,16 @@
 // 下面一条音量带（最近几秒的声音，停顿的地方就是切段的地方），再下面一段一段的英文原文和中文翻译往下滚。
 // 右边：听课中每 5 分钟左右更新一次提纲；结束后完整整理。没在听的时候列着以前的笔记。
 
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { IconCheck } from "../components/Icons";
+import { IconCheck, IconGear, IconTrash } from "../components/Icons";
+import type { SheetSpec } from "../components/Sheet";
 import { SlidesBar } from "../components/SlidesBar";
 import { t, tMsg, useLang } from "../lib/i18n";
 import {
   costText,
+  monthTotal,
+  moneyText,
   dueDate,
   elapsed,
   jumpToSegment,
@@ -24,6 +28,7 @@ import {
   useLectureHistory,
   useLevels,
   type LectureDue,
+  type LectureEntry,
   type LectureNotes,
   type LectureState,
 } from "../lib/lecture";
@@ -31,10 +36,15 @@ import { useNow } from "../lib/now";
 import { planner, usePlanner } from "../lib/planner";
 import { classesOn, fmtMinute, minuteOfDay } from "../lib/schedule";
 import { useSettings } from "../lib/settings";
+import { call } from "../lib/tauri";
+import { tasks, useTasks } from "../lib/tasks";
 
 interface Props {
   /** 打开设置里"听课"那一页（填密钥、看申请教程） */
   openSettings: () => void;
+  /** 问一句再做（下课、重新整理、删笔记） */
+  confirm: (spec: SheetSpec) => void;
+  closeConfirm: () => void;
 }
 
 function clock(ms: number): string {
@@ -51,26 +61,112 @@ function minutesOf(ms: number): number {
   return Math.max(0, Math.floor(ms / 60_000));
 }
 
-export function LecturePage({ openSettings }: Props) {
+export function LecturePage(props: Props) {
   useLang();
   const s = useLecture();
   const active = s.status !== "idle";
   return (
     <div className="page page--lecture">
       <section className="lec-live glass glass--thick" aria-label={t("实时翻译")}>
-        {active ? <Live s={s} /> : <Starter openSettings={openSettings} />}
+        {active ? <Live s={s} {...props} /> : <Starter {...props} />}
       </section>
       <section className="lec-notes glass glass--thick" aria-label={t("笔记")}>
-        <Notes s={s} />
+        <Notes s={s} {...props} />
       </section>
+    </div>
+  );
+}
+
+/** 下课前问一句：结束以后不能接着听 */
+export function askStop(confirm: (spec: SheetSpec) => void, closeConfirm: () => void): void {
+  confirm({
+    title: t("下课，整理笔记？"),
+    body: t("录音会停下，把整节课从头整理一遍。结束以后不能接着听。"),
+    actions: [
+      { label: t("还没下课"), onPick: closeConfirm },
+      {
+        label: t("下课"),
+        primary: true,
+        onPick: () => {
+          closeConfirm();
+          lecture.stop();
+        },
+      },
+    ],
+  });
+}
+
+/** 还没填密钥：在这一页上带着走一遍，不用先去设置里找 */
+function KeySetup({ openSettings, onReady }: { openSettings: () => void; onReady: () => void }) {
+  const [settings, update] = useSettings();
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const key = settings.lectureKey.trim();
+  const check = async () => {
+    setChecking(true);
+    setResult(null);
+    try {
+      await invoke("lecture_check_key", { key });
+      setResult({ ok: true, text: t("能用") });
+      window.setTimeout(onReady, 700);
+    } catch (e) {
+      setResult({ ok: false, text: tMsg(String(e)) });
+    } finally {
+      setChecking(false);
+    }
+  };
+  return (
+    <div className="lec-start__key">
+      <p>{t("听写、翻译和整理笔记都用 DeepSeek，要先填一个你自己的密钥。申请只要几分钟：")}</p>
+      <ol className="lec-keysteps">
+        <li>
+          <span>{t("打开 DeepSeek 开放平台，登录后充几块钱，再建一个 API key")}</span>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => call("lecture_open_platform")}>
+            {t("打开 DeepSeek 开放平台")}
+          </button>
+        </li>
+        <li>
+          <span>{t("把密钥粘到这里，试一下能不能用")}</span>
+          <div className="lec-keysteps__field">
+            <input
+              className="field"
+              type="password"
+              value={settings.lectureKey}
+              placeholder="sk-…"
+              spellCheck={false}
+              autoComplete="off"
+              aria-label={t("密钥")}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                setResult(null);
+                update({ lectureKey: event.target.value.trim() });
+              }}
+            />
+            <button type="button" className="btn btn--primary btn--sm" disabled={!key || checking} onClick={() => void check()}>
+              {checking ? t("正在试") : t("试一下")}
+            </button>
+          </div>
+          {result ? <span className={result.ok ? "row__note is-ok" : "row__note is-bad"}>{result.text}</span> : null}
+        </li>
+      </ol>
+      <p className="lec-keysteps__more">
+        <button type="button" className="lec-link" onClick={openSettings}>
+          {t("看一步步的教程")}
+        </button>
+        {key && !result?.ok ? (
+          <button type="button" className="lec-link" onClick={onReady}>
+            {t("不试了，直接用")}
+          </button>
+        ) : null}
+      </p>
     </div>
   );
 }
 
 // ---------- 左边：开始之前 ----------
 
-function Starter({ openSettings }: Props) {
+function Starter({ openSettings, confirm, closeConfirm }: Props) {
   const [settings, update] = useSettings();
+  const history = useLectureHistory();
   const { courses } = usePlanner();
   const now = useNow();
   const system = settings.lectureSource === "system";
@@ -85,17 +181,46 @@ function Starter({ openSettings }: Props) {
     if (!touched.current && picked === null && current) setPicked(current.course.id);
   }, [current, picked]);
   const hasKey = settings.lectureKey.trim().length > 0;
+  // 进来时没有密钥：带着填一遍，试过能用再换成平常的样子（不然刚打一个字输入框就没了）
+  const [setup, setSetup] = useState(!hasKey);
+  useEffect(() => {
+    if (!hasKey) setSetup(true);
+  }, [hasKey]);
+  const ready = hasKey && !setup;
+  const month = monthTotal(history, now);
 
   const chosen = today.find((c) => c.course.id === picked) ?? null;
   const name = chosen ? chosen.course.title : other.trim();
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
-  const begin = async () => {
+  const start = async () => {
     setStarting(true);
     setError("");
     const failed = await lecture.start(name, chosen ? chosen.course.id : null);
     setStarting(false);
     if (failed) setError(tMsg(failed));
+  };
+  // 第一次听课问一次要不要存录音：好几样功能靠它，但它占地方，得自己拿主意
+  const begin = () => {
+    if (settings.lectureAudioAsked || settings.lectureSaveAudio) {
+      void start();
+      return;
+    }
+    const pick = (lectureSaveAudio: boolean) => {
+      closeConfirm();
+      update({ lectureSaveAudio, lectureAudioAsked: true });
+      void start();
+    };
+    confirm({
+      title: t("要保存这节课的录音吗？"),
+      body: t(
+        "存了以后，可以点每句话听原声、核对没听清的地方，下课后还能用录音重新整理一遍（更准）。录音只存在这台电脑上，一小时大约 30 MB，设置里随时能删、能关。",
+      ),
+      actions: [
+        { label: t("不存，只留文字"), onPick: () => pick(false) },
+        { label: t("保存录音"), primary: true, onPick: () => pick(true) },
+      ],
+    });
   };
 
   return (
@@ -144,48 +269,48 @@ function Starter({ openSettings }: Props) {
         }}
       />
 
-      {hasKey && name ? <SlidesBar course={name} courseId={chosen ? chosen.course.id : null} explain /> : null}
+      {ready && name ? <SlidesBar course={name} courseId={chosen ? chosen.course.id : null} explain /> : null}
 
-      {hasKey ? (
+      {ready ? (
         <div className="lec-start__go">
-          <div className="lec-source" role="radiogroup" aria-label={t("听哪里的声音")}>
+          <div className="lec-sourcerow">
+            <div className="lec-source" role="radiogroup" aria-label={t("听哪里的声音")}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!system}
+                className={!system ? "lec-source__opt is-on" : "lec-source__opt"}
+                onClick={() => update({ lectureSource: "mic" })}
+              >
+                {t("麦克风")}
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={system}
+                className={system ? "lec-source__opt is-on" : "lec-source__opt"}
+                onClick={() => update({ lectureSource: "system" })}
+              >
+                {t("电脑的声音")}
+              </button>
+            </div>
             <button
               type="button"
-              role="radio"
-              aria-checked={!system}
-              className={!system ? "lec-source__opt is-on" : "lec-source__opt"}
-              onClick={() => update({ lectureSource: "mic" })}
+              className="ibtn lec-sourcerow__more"
+              title={t("选用哪个麦克风、降噪、听写用哪个")}
+              aria-label={t("选用哪个麦克风、降噪、听写用哪个")}
+              onClick={openSettings}
             >
-              {t("麦克风")}
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={system}
-              className={system ? "lec-source__opt is-on" : "lec-source__opt"}
-              onClick={() => update({ lectureSource: "system" })}
-            >
-              {t("电脑的声音")}
+              <IconGear />
             </button>
           </div>
           <button
             type="button"
             className="btn btn--primary lec-start__btn"
             disabled={!name || starting}
-            onClick={() => void begin()}
+            onClick={begin}
           >
             {starting ? (system ? t("正在打开") : t("正在打开麦克风")) : t("开始听课")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost lec-start__import"
-            disabled={!name || starting}
-            onClick={() => {
-              setError("");
-              void lecture.importFile(name, chosen ? chosen.course.id : null).then((e) => e && setError(tMsg(e)));
-            }}
-          >
-            {t("导入录音或视频")}
           </button>
           {error ? <p className="row__error">{error}</p> : null}
           <p className="lec-start__note">
@@ -194,14 +319,31 @@ function Starter({ openSettings }: Props) {
               : t("用麦克风听，英文一段一段听写下来、翻成中文。")}
             {settings.lectureSaveAudio ? t("录音存在这台电脑上。") : t("录音不留，只留文字。")}
           </p>
+          <p className="lec-start__note">
+            {t("课已经上完了、手上有录音？")}
+            <button
+              type="button"
+              className="lec-link"
+              disabled={!name || starting}
+              title={name ? "" : t("先选一节课或写个课名")}
+              onClick={() => {
+                setError("");
+                void lecture.importFile(name, chosen ? chosen.course.id : null).then((e) => e && setError(tMsg(e)));
+              }}
+            >
+              {t("导入录音或视频")}
+            </button>
+          </p>
+          {month.count > 0 ? (
+            <p className="lec-start__note lec-start__month">
+              {month.usd > 0
+                ? t("这个月听了 {n} 节，大概花了 {cost}", { n: month.count, cost: moneyText(month.usd) })
+                : t("这个月听了 {n} 节", { n: month.count })}
+            </p>
+          ) : null}
         </div>
       ) : (
-        <div className="lec-start__key">
-          <p>{t("听写、翻译和整理笔记都用 DeepSeek。先填一个 DeepSeek 密钥，申请只要几分钟。")}</p>
-          <button type="button" className="btn btn--primary" onClick={openSettings}>
-            {t("去填密钥")}
-          </button>
-        </div>
+        <KeySetup openSettings={openSettings} onReady={() => setSetup(false)} />
       )}
     </div>
   );
@@ -221,7 +363,7 @@ function LevelBand({ quiet }: { quiet: boolean }) {
   );
 }
 
-function Live({ s }: { s: LectureState }) {
+function Live({ s, confirm, closeConfirm }: { s: LectureState } & Props) {
   const now = useNow();
   const playing = usePlaying();
   // 听课时不放：喇叭的声音会被麦克风录进去
@@ -301,7 +443,11 @@ function Live({ s }: { s: LectureState }) {
             </button>
           ) : null}
           {s.status === "listening" || s.status === "paused" ? (
-            <button type="button" className="btn btn--primary" onClick={lecture.stop}>
+            <button
+              type="button"
+              className="btn btn--primary lec-head__stop"
+              onClick={() => askStop(confirm, closeConfirm)}
+            >
               {t("下课，整理笔记")}
             </button>
           ) : null}
@@ -317,7 +463,7 @@ function Live({ s }: { s: LectureState }) {
           ) : null}
           {s.status === "done" ? (
             <button type="button" className="btn btn--ghost" onClick={lecture.close}>
-              {t("听下一节")}
+              {t("关闭这节笔记")}
             </button>
           ) : null}
         </div>
@@ -440,9 +586,31 @@ function Live({ s }: { s: LectureState }) {
 
 // ---------- 右边：笔记 ----------
 
-function Notes({ s }: { s: LectureState }) {
+function Notes({ s, confirm, closeConfirm }: { s: LectureState } & Props) {
   const [copied, setCopied] = useState(false);
   const [redoError, setRedoError] = useState("");
+  // 用录音重新整理要花钱、要等、还会换掉现在的原文和笔记：先说清楚再做
+  const askRedo = () => {
+    const cost = costText(s.usage);
+    confirm({
+      title: t("用录音重新整理这节课？"),
+      body:
+        t("会用录音把整节课重新听写、翻译、整理一遍，比边听边写的准。要等几分钟，左边的原文和右边的笔记会换成新的。") +
+        (cost ? t("花费和第一次差不多（第一次大概 {cost}）。", { cost }) : ""),
+      actions: [
+        { label: t("先不用"), onPick: closeConfirm },
+        {
+          label: t("重新整理"),
+          primary: true,
+          onPick: () => {
+            closeConfirm();
+            setRedoError("");
+            void lecture.redo().then((err) => err && setRedoError(tMsg(err)));
+          },
+        },
+      ],
+    });
+  };
   const active = s.status !== "idle";
 
   let status = "";
@@ -480,13 +648,10 @@ function Notes({ s }: { s: LectureState }) {
             {s.audioHere ? (
               <button
                 type="button"
-                className="btn btn--ghost btn--sm"
+                className="btn btn--ghost btn--sm lec-nhead__redo"
                 disabled={s.redo !== null || s.summarizing}
                 title={t("用这节课的录音按更长的段重新听写、翻译、整理，比边听边写的准")}
-                onClick={() => {
-                  setRedoError("");
-                  void lecture.redo().then((err) => err && setRedoError(tMsg(err)));
-                }}
+                onClick={askRedo}
               >
                 {t("用录音重新整理")}
               </button>
@@ -496,7 +661,7 @@ function Notes({ s }: { s: LectureState }) {
       </header>
       {redoError ? <p className="row__error lec-nhead__error">{redoError}</p> : null}
       <div className="lec-paper">
-        {!active ? <History /> : null}
+        {!active ? <History confirm={confirm} closeConfirm={closeConfirm} /> : null}
         {active && s.notes ? <NotesBody s={s} notes={s.notes} draft={s.status !== "done"} /> : null}
         {active && !s.notes ? (
           <p className="lec-paper__empty">
@@ -517,7 +682,32 @@ function Notes({ s }: { s: LectureState }) {
   );
 }
 
+/** "回去复习"里的一条：一键变成待办（预计一个番茄，到待办里再改） */
+function ReviewItem({ text, added }: { text: string; added: boolean }) {
+  return (
+    <li className="lec-review">
+      <span className="lec-review__text">{text}</span>
+      <button
+        type="button"
+        className={added ? "lec-add is-done" : "lec-add"}
+        disabled={added}
+        onClick={() => void tasks.add(text.slice(0, 80), 1)}
+      >
+        {added ? (
+          <>
+            <IconCheck />
+            {t("已加上")}
+          </>
+        ) : (
+          t("变成待办")
+        )}
+      </button>
+    </li>
+  );
+}
+
 function NotesBody({ s, notes, draft }: { s: LectureState; notes: LectureNotes; draft: boolean }) {
+  const taskNames = new Set(useTasks().tasks.map((task) => task.name));
   const { words, deadlines, courses } = usePlanner();
   const timeOf = useMemo(() => new Map(s.segments.map((seg) => [seg.id, seg.at])), [s.segments]);
   const known = useMemo(() => new Set(words.map((w) => w.word.toLowerCase())), [words]);
@@ -609,9 +799,9 @@ function NotesBody({ s, notes, draft }: { s: LectureState; notes: LectureNotes; 
       {notes.review.length > 0 ? (
         <section className="lec-doc__part">
           <h3>{t("回去复习")}</h3>
-          <ul>
+          <ul className="lec-reviews">
             {notes.review.map((r) => (
-              <li key={r}>{r}</li>
+              <ReviewItem key={r} text={r} added={taskNames.has(r.slice(0, 80))} />
             ))}
           </ul>
         </section>
@@ -666,27 +856,96 @@ function Due({ due, resolved, added }: { due: LectureDue; resolved: string | nul
   );
 }
 
-function History() {
+/** 以前的笔记：按课程分组（最近听过的课在前），可以搜、可以删 */
+function History({ confirm, closeConfirm }: Pick<Props, "confirm" | "closeConfirm">) {
   const list = useLectureHistory();
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState("");
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const shown = q
+      ? list.filter((e) => e.course.toLowerCase().includes(q) || e.summary.toLowerCase().includes(q))
+      : list;
+    // list 已经是新的在前，所以每门课第一次出现的位置就是它最近一次上课
+    const byCourse = new Map<string, LectureEntry[]>();
+    for (const entry of shown) {
+      const group = byCourse.get(entry.course);
+      if (group) group.push(entry);
+      else byCourse.set(entry.course, [entry]);
+    }
+    return [...byCourse.entries()];
+  }, [list, query]);
+
   if (list.length === 0) {
     return <p className="lec-paper__empty">{t("听完一节课，整理好的笔记会存在这里，几台电脑同步。")}</p>;
   }
+
+  const askRemove = (entry: LectureEntry, date: string) =>
+    confirm({
+      title: t("删掉这份笔记？"),
+      body: t("{date} 的《{course}》。笔记、原文和这台电脑上的录音都会删掉，找不回来。", {
+        date,
+        course: entry.course,
+      }),
+      actions: [
+        { label: t("留着"), onPick: closeConfirm },
+        {
+          label: t("删掉"),
+          primary: true,
+          onPick: () => {
+            closeConfirm();
+            setError("");
+            void lecture.remove(entry.id).then((err) => err && setError(tMsg(err)));
+          },
+        },
+      ],
+    });
+
   return (
-    <ul className="lec-history">
-      {list.map((entry) => {
-        const d = new Date(entry.startedAt);
-        return (
-          <li key={entry.id}>
-            <button type="button" className="lec-history__item" onClick={() => lecture.open(entry.id)}>
-              <span className="lec-history__date">
-                {t("{m}月{d}日", { m: d.getMonth() + 1, d: d.getDate() })}
-              </span>
-              <span className="lec-history__course">{entry.course}</span>
-              <span className="lec-history__summary">{entry.summary}</span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="lec-history">
+      {list.length > 4 ? (
+        <input
+          className="field lec-history__search"
+          type="search"
+          placeholder={t("搜课名或内容")}
+          value={query}
+          aria-label={t("搜课名或内容")}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)}
+        />
+      ) : null}
+      {error ? <p className="row__error">{error}</p> : null}
+      {groups.length === 0 ? <p className="lec-paper__empty">{t("没有找到")}</p> : null}
+      {groups.map(([course, entries]) => (
+        <section key={course} className="lec-history__group">
+          <h3 className="lec-history__course">
+            {course}
+            <span className="lec-history__count">{t("{n} 节", { n: entries.length })}</span>
+          </h3>
+          <ul className="lec-history__list">
+            {entries.map((entry) => {
+              const d = new Date(entry.startedAt);
+              const date = t("{m}月{d}日", { m: d.getMonth() + 1, d: d.getDate() });
+              return (
+                <li key={entry.id} className="lec-history__row">
+                  <button type="button" className="lec-history__item" onClick={() => lecture.open(entry.id)}>
+                    <span className="lec-history__date">{date}</span>
+                    <span className="lec-history__summary">{entry.summary || t("还没有整理")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="lec-history__remove"
+                    title={t("删掉这份笔记")}
+                    aria-label={t("删掉 {date} 的笔记", { date })}
+                    onClick={() => askRemove(entry, date)}
+                  >
+                    <IconTrash />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }

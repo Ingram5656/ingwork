@@ -63,6 +63,17 @@ function schedule(): void {
       const end = at(due, 24 * 60);
       if (end <= now) continue;
       const eve = addDays(due, -1);
+      // 自己选的提前几天：那天早上 9 点提醒一次（没赶上的话，到前一天晚上那次之前都还会补）
+      const early = d.remindDays ?? 0;
+      if (early >= 2) {
+        list.push({
+          key: `ddl|${d.id}|${d.due}|early${early}`,
+          at: at(addDays(due, -early), 9 * 60),
+          until: at(eve, 20 * 60),
+          title: t("还有 {n} 天截止：{title}", { n: early, title: d.title }),
+          body: t("提前跟你说一声，可以先排进待办"),
+        });
+      }
       // 前一天晚上 8 点
       list.push({
         key: `ddl|${d.id}|${d.due}|eve`,

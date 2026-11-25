@@ -7,7 +7,7 @@ import { useNow } from "../lib/now";
 import { clearPlannerError, planner, usePlanner, usePlannerError, type Deadline } from "../lib/planner";
 import { daysUntil } from "../lib/schedule";
 import { addDays, dayKey } from "../lib/stats";
-import { IconCheck, IconClose, IconPlus, IconTrash } from "./Icons";
+import { IconTrash } from "./Icons";
 
 /** 这么多天以内的算紧急 */
 const URGENT_DAYS = 3;
@@ -68,12 +68,15 @@ export function Deadlines() {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [due, setDue] = useState(() => dayKey(addDays(new Date(), 7)));
+  // 提前几天再提醒一次（前一天晚上和当天早上那两次照常）
+  const [early, setEarly] = useState(0);
 
   const open = deadlines.filter((d) => !d.done).sort((a, b) => a.due.localeCompare(b.due));
 
   const add = async () => {
-    if (await planner.addDeadline(title, due)) {
+    if (await planner.addDeadline(title, due, early)) {
       setTitle("");
+      setEarly(0);
       setAdding(false);
     }
   };
@@ -94,16 +97,14 @@ export function Deadlines() {
         <h2 className="dl__heading">{t("截止日期")}</h2>
         <button
           type="button"
-          className={adding ? "ibtn ibtn--sm is-on" : "ibtn ibtn--sm"}
-          title={adding ? t("不加了") : t("加一个截止日期")}
-          aria-label={adding ? t("不加了") : t("加一个截止日期")}
+          className="btn btn--ghost btn--sm"
           aria-expanded={adding}
           onClick={() => {
             clearPlannerError();
             setAdding(!adding);
           }}
         >
-          {adding ? <IconClose /> : <IconPlus />}
+          {adding ? t("不加了") : t("添加")}
         </button>
       </div>
 
@@ -127,14 +128,24 @@ export function Deadlines() {
             onChange={(event: ChangeEvent<HTMLInputElement>) => setDue(event.target.value)}
             onKeyDown={onKey}
           />
-          <button
-            type="button"
-            className="ibtn ibtn--sm"
-            title={t("添加")}
-            aria-label={t("添加")}
-            onClick={() => void add()}
+        </div>
+      ) : null}
+      {adding ? (
+        <div className="dl__add dl__add--more">
+          <select
+            className="field field--select dl__early"
+            value={early}
+            aria-label={t("提前提醒")}
+            title={t("前一天晚上和当天早上都会提醒；这里可以再选早几天提醒一次")}
+            onChange={(event: ChangeEvent<HTMLSelectElement>) => setEarly(Number(event.target.value))}
           >
-            <IconCheck />
+            <option value={0}>{t("不另外提前提醒")}</option>
+            <option value={3}>{t("提前 3 天提醒")}</option>
+            <option value={7}>{t("提前 7 天提醒")}</option>
+            <option value={14}>{t("提前 14 天提醒")}</option>
+          </select>
+          <button type="button" className="btn btn--primary btn--sm" onClick={() => void add()}>
+            {t("添加")}
           </button>
         </div>
       ) : null}

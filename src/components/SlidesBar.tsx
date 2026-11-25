@@ -1,7 +1,7 @@
 // 听课页上的"课件"一行：这门课传过哪些课件，随时能再传一份或删掉。
 // 课件是可选的：传了，专业词听写和翻译更准、笔记跟着课件的结构走。
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { t, tMsg, useLang } from "../lib/i18n";
 import { slides, useMaterial } from "../lib/lecture";
 
@@ -34,7 +34,20 @@ export function SlidesBar({ course, courseId, explain }: Props) {
     }
   };
 
+  // 删课件要再点一次确认：删错了得重新上传、重新整理术语
+  const [armed, setArmed] = useState<string | null>(null);
+  useEffect(() => {
+    if (armed === null) return;
+    const timer = window.setTimeout(() => setArmed(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
+
   const remove = async (name: string) => {
+    if (armed !== name) {
+      setArmed(name);
+      return;
+    }
+    setArmed(null);
     try {
       setMaterial(await slides.remove(course, courseId, name));
     } catch (e) {
@@ -52,11 +65,12 @@ export function SlidesBar({ course, courseId, explain }: Props) {
             <span className="slides__count">{t("{n} 个术语", { n: s.terms })}</span>
             <button
               type="button"
-              className="slides__remove"
+              className={armed === s.name ? "slides__remove is-armed" : "slides__remove"}
               aria-label={t("删掉 {name}", { name: s.name })}
+              title={armed === s.name ? t("再点一次就删掉") : t("删掉这份课件")}
               onClick={() => void remove(s.name)}
             >
-              ×
+              {armed === s.name ? t("删掉？") : "×"}
             </button>
           </span>
         ))}

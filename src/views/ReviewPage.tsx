@@ -1,7 +1,7 @@
 // 复盘页：今天专注了多久、做了什么、预计和实际差多少；杂念箱在这里整理；生词本也放在这里。
 // 历史上每一天的专注记录还是看原来的统计面板（"按周看"）。
 
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { SheetSpec } from "../components/Sheet";
 import { t, useLang } from "../lib/i18n";
 import { useNow } from "../lib/now";
@@ -136,10 +136,39 @@ export function ReviewPage({ onOpenHistory, confirm, closeConfirm }: Props) {
       title: first.course.title,
     });
     const morning = gapsBetween(next.classes, 8 * 60, first.start)[0];
-    const n = morning ? pomodorosIn(morning, settings.focusMin, settings.shortMin, settings.classLead) : 0;
+    const n = morning ? pomodorosIn(morning, settings.focusMin, settings.shortMin, settings.travelMin) : 0;
     if (n > 0) tomorrow += t("。上课前放得下 {n} 个番茄", { n });
     if (n > 0 && leftPomos > 0) tomorrow += t("，待办里还剩 {p} 个", { p: leftPomos });
   }
+
+  // ---------- 杂念箱：删掉以后几秒内可以撤销 ----------
+  // 点"删掉"先只是藏起来，过几秒才真删；这期间点"撤销"就放回来
+  const [trashed, setTrashed] = useState<{ id: string; text: string } | null>(null);
+  const trashTimer = useRef<number | null>(null);
+  const flushTrash = (item: { id: string } | null) => {
+    if (trashTimer.current !== null) window.clearTimeout(trashTimer.current);
+    trashTimer.current = null;
+    if (item) void planner.remove(item.id);
+  };
+  const trashedRef = useRef(trashed);
+  trashedRef.current = trashed;
+  const trash = (id: string, text: string) => {
+    // 上一条还在等：先把它真删掉
+    flushTrash(trashedRef.current);
+    setTrashed({ id, text });
+    trashTimer.current = window.setTimeout(() => {
+      trashTimer.current = null;
+      setTrashed(null);
+      void planner.remove(id);
+    }, 6000);
+  };
+  const undoTrash = () => {
+    if (trashTimer.current !== null) window.clearTimeout(trashTimer.current);
+    trashTimer.current = null;
+    setTrashed(null);
+  };
+  // 离开这一页：还在等的那条照删
+  useEffect(() => () => flushTrash(trashedRef.current), []);
 
   // ---------- 生词本 ----------
   const words = [...plan.words].sort((a, b) => b.addedAt - a.addedAt);
@@ -168,9 +197,6 @@ export function ReviewPage({ onOpenHistory, confirm, closeConfirm }: Props) {
       <div className="rv__head">
         <h2 className="rv__title">{t("复盘")}</h2>
         <span className="rv__date">{dateTitle(now, lang)}</span>
-        <button type="button" className="btn btn--ghost btn--sm rv__history" onClick={onOpenHistory}>
-          {t("按周看专注记录")}
-        </button>
       </div>
 
       <div className="tiles rv__tiles">
@@ -181,6 +207,9 @@ export function ReviewPage({ onOpenHistory, confirm, closeConfirm }: Props) {
             {t("{n} 个番茄", { n: today.pomodoros })}
             {stopped > 0 ? t("，中途停下 {n} 次", { n: stopped }) : ""}
           </div>
+          <button type="button" className="tile__more" onClick={onOpenHistory}>
+            {t("按周看专注记录")}
+          </button>
         </div>
         <div className="tile glass glass--thick">
           <div className="tile__label">{t("待办")}</div>
@@ -231,11 +260,22 @@ export function ReviewPage({ onOpenHistory, confirm, closeConfirm }: Props) {
             <h3 className="rv__heading">{t("杂念箱")}</h3>
             <span className="rv__count">{plan.notes.length > 0 ? t("{n} 条待整理", { n: plan.notes.length }) : ""}</span>
           </div>
+          {trashed ? (
+            <div className="notes__undo" role="status">
+              <span className="notes__undotext">{t("删掉了“{text}”", { text: trashed.text })}</span>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={undoTrash}>
+                {t("撤销")}
+              </button>
+            </div>
+          ) : null}
           {plan.notes.length === 0 ? (
             <p className="rv__empty">{t("专注时想到别的事，按快捷键记一句，回头在这里转成待办或删掉。")}</p>
           ) : (
             <ul className="notes">
-              {[...plan.notes].reverse().map((note) => (
+              {[...plan.notes]
+                .reverse()
+                .filter((note) => note.id !== trashed?.id)
+                .map((note) => (
                 <li key={note.id} className="notes__item">
                   <span className="notes__text">{note.text}</span>
                   <span className="notes__time">{fmtMinute(new Date(note.at).getHours() * 60 + new Date(note.at).getMinutes())}</span>
@@ -243,7 +283,7 @@ export function ReviewPage({ onOpenHistory, confirm, closeConfirm }: Props) {
                     <button type="button" className="btn btn--primary btn--sm" onClick={() => void planner.noteToTask(note.id)}>
                       {t("转为待办")}
                     </button>
-                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => void planner.remove(note.id)}>
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => trash(note.id, note.text)}>
                       {t("删掉")}
                     </button>
                   </span>

@@ -76,6 +76,9 @@ pub struct Deadline {
     pub due: String,
     #[serde(default)]
     pub done: bool,
+    /// 提前几天再提醒一次（0 是不另外提前，只有前一天晚上和当天早上那两次）
+    #[serde(default)]
+    pub remind_days: u32,
     #[serde(default)]
     pub updated_at: u64,
 }
@@ -645,6 +648,7 @@ pub fn deadline_add(
     planner: State<Planner>,
     title: String,
     due: String,
+    remind_days: Option<u32>,
 ) -> Result<Store, String> {
     change(&app, &planner, |store, now| {
         if store.deadlines.len() >= MAX_DEADLINES {
@@ -659,6 +663,7 @@ pub fn deadline_add(
             title,
             due,
             done: false,
+            remind_days: remind_days.unwrap_or(0).min(30),
             updated_at: now,
         });
         Ok(())

@@ -269,6 +269,27 @@ html.is-hidden .bg__blob {
 
 /* ---------- 6. 按钮 ---------- */
 
+/* 图标按钮下面冒出来的一句话（环境音：专注开始后才会一直放） */
+.ibtn-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.ibtn-tip {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  z-index: 40;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgba(34, 20, 66, 0.96);
+  box-shadow: 0 10px 28px rgba(8, 4, 24, 0.45);
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .ibtn {
   position: relative;
   width: 44px;
@@ -823,7 +844,8 @@ html.is-hidden .bg__blob {
 
 .settings {
   width: 960px;
-  height: 680px;
+  /* 跟着窗口变高，少滚动；窗口矮的时候也不顶出去 */
+  height: clamp(480px, calc(100vh - 150px), 900px);
   display: grid;
   grid-template-columns: 236px 1fr;
   border-radius: 34px;
@@ -836,6 +858,21 @@ html.is-hidden .bg__blob {
   gap: 4px;
   padding: 32px 16px 20px;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+/* 分类之间的分隔：功能、声音和外观、系统 */
+.settings__sep {
+  flex: none;
+  height: 1px;
+  margin: 8px 16px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.navitem {
+  flex: none;
 }
 
 .settings__title {
@@ -970,6 +1007,27 @@ html.is-hidden .bg__blob {
 .row__note {
   font-size: 13px;
   color: rgba(255, 255, 255, 0.55);
+}
+
+/* 试一下、检查更新的结果：成了和没成一眼分得出来 */
+.row__note.is-ok,
+.row__label.is-ok {
+  color: #a8e6b8;
+}
+
+.row__note.is-ok::before,
+.row__label.is-ok::before {
+  content: "✓ ";
+}
+
+.row__note.is-bad,
+.row__label.is-bad {
+  color: #ffb4b4;
+}
+
+.row__note.is-bad::before,
+.row__label.is-bad::before {
+  content: "✕ ";
 }
 
 .row__end {
@@ -1379,6 +1437,15 @@ html.is-hidden .bg__blob {
   text-align: center;
   font-size: 14px;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+/* 数字后面写明单位：预计几个番茄 */
+.stepper__unit {
+  margin-left: 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .tasks__error {
@@ -2659,6 +2726,20 @@ button.tl__block:focus-visible {
   height: 38px;
 }
 
+/* 第二行：提前几天提醒、添加 */
+.dl__add--more {
+  justify-content: space-between;
+}
+
+.dl__early {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  background-position:
+    calc(100% - 18px) 16px,
+    calc(100% - 13px) 16px;
+}
+
 .dl__error {
   margin-top: 6px;
   font-size: 12.5px;
@@ -3089,6 +3170,30 @@ button.tl__block:focus-visible {
   gap: 8px;
 }
 
+/* "加上这节课"是这张表单的主按钮：占满一行，不用找 */
+.cform__save {
+  flex: 1 1 100%;
+  height: 42px;
+}
+
+/* "清空课表"是危险操作：做成一行不起眼的小字，不放按钮的样子 */
+.sch__clear {
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.45);
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.sch__clear:hover,
+.sch__clear:focus-visible {
+  color: #ffb4b4;
+}
+
 /* 一周的课 */
 .week {
   position: absolute;
@@ -3359,9 +3464,44 @@ button.tl__block:focus-visible {
   color: rgba(255, 255, 255, 0.75);
 }
 
-.rv__history {
-  margin-left: auto;
-  align-self: center;
+/* "今天专注"卡片里的入口：按周看专注记录 */
+.tile__more {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.7);
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.tile__more:hover,
+.tile__more:focus-visible {
+  color: #fff;
+}
+
+/* 杂念箱：刚删掉的一条，几秒内可以撤销 */
+.notes__undo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 13px;
+}
+
+.notes__undotext {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .rv__tiles .tile {
@@ -5304,8 +5444,98 @@ html.is-island #root {
   font-weight: 600;
 }
 
-.lec-start__import {
-  align-self: stretch;
+/* 声音来源一行：切换条 + 一个进设置的小齿轮（选麦克风、降噪） */
+.lec-sourcerow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lec-sourcerow .lec-source {
+  flex: 1;
+}
+
+.lec-sourcerow__more {
+  width: 40px;
+  height: 40px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.lec-sourcerow__more svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 句子里的文字按钮：导入录音、看教程 */
+.lec-link {
+  padding: 0;
+  margin: 0 0 0 4px;
+  border: 0;
+  background: none;
+  color: #fff;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.lec-link:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.lec-link:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.lec-start__month {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* 还没填密钥时，在听课页上带着走的两步 */
+.lec-keysteps {
+  margin: 0;
+  padding: 0 0 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.lec-keysteps li {
+  padding-left: 4px;
+}
+
+.lec-keysteps li > span {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.lec-keysteps__field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lec-keysteps__field .field {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+}
+
+.lec-keysteps__more {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.lec-keysteps__more .lec-link {
+  margin-left: 0;
+  color: rgba(255, 255, 255, 0.75);
 }
 
 /* 导入的进度条 */
@@ -5394,6 +5624,16 @@ html.is-island #root {
   color: #fff;
 }
 
+/* 点了一次：变成"删掉？"，再点才真删 */
+.slides__remove.is-armed {
+  width: auto;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 120, 120, 0.3);
+  color: #fff;
+  font-size: 12px;
+}
+
 .slides__hint {
   margin: 0;
   font-size: 12.5px;
@@ -5440,6 +5680,11 @@ html.is-island #root {
   display: flex;
   gap: 8px;
   flex: none;
+}
+
+/* "下课"和"暂停"拉开一点：点错了这节课就结束了 */
+.lec-head__stop {
+  margin-left: 14px;
 }
 
 /* 音量带：最近几秒的声音，从左（以前）到右（现在）。停顿的地方矮下去，就是切段的地方 */
@@ -5696,6 +5941,33 @@ html.is-island #root {
   margin-left: auto;
 }
 
+/* "用录音重新整理"要花钱、会换掉现在的笔记：和"复制""导出"隔开 */
+.lec-nhead__redo {
+  margin-left: 12px;
+}
+
+/* 回去复习：每条后面一个"变成待办" */
+.lec-reviews {
+  list-style: none;
+  padding-left: 0 !important;
+}
+
+.lec-review {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.lec-review__text {
+  min-width: 0;
+}
+
+.lec-review .lec-add {
+  flex: none;
+}
+
 .lec-nhead__error {
   margin: -4px 30px 8px;
 }
@@ -5948,23 +6220,64 @@ html.is-island #root {
 }
 
 /* 以前的笔记 */
+/* 以前的笔记：按课程分组，每组一个课名，下面一行行是日期和一句话的总结 */
 .lec-history {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.lec-history__search {
+  flex: none;
+  width: 100%;
+  height: 38px;
+}
+
+.lec-history__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lec-history__course {
+  margin: 0;
+  padding: 0 10px 2px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.lec-history__count {
+  flex: none;
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.lec-history__list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+.lec-history__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .lec-history__item {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: 64px 1fr;
-  grid-template-areas:
-    "date course"
-    "date summary";
   column-gap: 12px;
-  width: 100%;
-  padding: 12px 10px;
+  align-items: baseline;
+  padding: 9px 10px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 12px;
   background: transparent;
   color: #fff;
   font: inherit;
@@ -5981,25 +6294,46 @@ html.is-island #root {
 }
 
 .lec-history__date {
-  grid-area: date;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: rgba(255, 255, 255, 0.6);
 }
 
-.lec-history__course {
-  grid-area: course;
-  font-size: 14.5px;
-  font-weight: 600;
-}
-
 .lec-history__summary {
-  grid-area: summary;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.66);
+  font-size: 13.5px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* 删掉这份笔记：平时很淡，鼠标到这一行或者键盘走到它上面才显出来 */
+.lec-history__remove {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.28);
+  cursor: pointer;
+}
+
+.lec-history__remove svg {
+  width: 15px;
+  height: 15px;
+}
+
+.lec-history__row:hover .lec-history__remove,
+.lec-history__remove:focus-visible {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.lec-history__remove:hover {
+  background: rgba(255, 120, 120, 0.22);
+  color: #fff;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6048,6 +6382,72 @@ html.is-island #root {
 .keyfield__error {
   margin: 0;
   padding: 0 18px 14px;
+}
+
+/* "试一下"的结果，写在那一行下面 */
+.row__verdict {
+  margin: -6px 0 0;
+  padding: 0 16px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.row__verdict.is-ok {
+  color: #a8e6b8;
+}
+
+.row__verdict.is-ok::before {
+  content: "✓ ";
+}
+
+.row__verdict.is-bad {
+  color: #ffb4b4;
+}
+
+.row__verdict.is-bad::before {
+  content: "✕ ";
+}
+
+/* 展开的明细（哪些课有录音）：比平常的一行矮一点、缩进去一点 */
+.row--sub {
+  min-height: 46px;
+  padding-left: 30px;
+}
+
+.row--sub .row__label {
+  font-size: 13.5px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* 教程的标题：点一下展开、收起 */
+.howto__toggle {
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 20px;
+  background: none;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.howto__toggle:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -2px;
+}
+
+.howto__chev {
+  flex: none;
+  width: 22px;
+  text-align: center;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .howto {

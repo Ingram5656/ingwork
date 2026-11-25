@@ -1,17 +1,19 @@
-// 设置里的"听课"一页：DeepSeek 密钥、试一下能不能用、怎么申请（一步一步）；
-// 听写用哪个（DeepSeek 或 Groq 上的 Whisper）、老师讲课的语言；听哪里的声音、用哪个麦克风；上课时要不要问一声。
+// 设置里的"听课"一页：DeepSeek 密钥、试一下能不能用、怎么申请（一步一步，平时折起来）；
+// 听写用哪个（DeepSeek 或 Groq 上的 Whisper）、老师讲课的语言；听哪里的声音、用哪个麦克风；
+// 录音存不存、占了多少、按课删；花费按哪种钱显示。上课时要不要问一声在"提醒"页。
 // 分组、开关用设置面板自己的，从外面传进来，样子保持一致。
 
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState, type ChangeEvent, type ComponentType, type ReactNode } from "react";
 import { t, tMsg } from "../lib/i18n";
+import { lecture, sizeText, useLectureHistory } from "../lib/lecture";
 import type { Settings } from "../lib/settings";
 import { call } from "../lib/tauri";
 import { Segmented } from "./Segmented";
 
 interface Parts {
   Group: ComponentType<{ title?: string; children: ReactNode }>;
-  Row: ComponentType<{ label: string; wrap?: boolean; children: ReactNode }>;
+  Row: ComponentType<{ label: string; wrap?: boolean; detail?: string; children: ReactNode }>;
   Toggle: ComponentType<{ on: boolean; label: string; disabled?: boolean; onChange: (on: boolean) => void }>;
 }
 
@@ -64,17 +66,6 @@ const GROQ_STEPS: { text: string; detail?: string }[] = [
   },
 ];
 
-/** 一行设置，下面带一句说明（说明会换行，不会被截断） */
-function Explained({ label, detail, children }: { label: string; detail: string; children: ReactNode }) {
-  return (
-    <div className="row row--wrap">
-      <div className="row__label">{label}</div>
-      <div className="row__end">{children}</div>
-      <div className="row__detail">{detail}</div>
-    </div>
-  );
-}
-
 /** 用哪个麦克风：系统默认的，或者这台电脑上接着的某一个 */
 function MicPicker({ value, onChange }: { value: string; onChange: (name: string) => void }) {
   const [names, setNames] = useState<string[]>([]);
@@ -107,6 +98,122 @@ function MicPicker({ value, onChange }: { value: string; onChange: (name: string
   );
 }
 
+/** 申请密钥的教程：平时折起来（密钥填好以后就用不上了），点一下展开 */
+function Howto({
+  title,
+  steps,
+  open,
+  onToggle,
+  openLabel,
+  onOpenSite,
+}: {
+  title: string;
+  steps: { text: string; detail?: string }[];
+  open: boolean;
+  onToggle: () => void;
+  openLabel: string;
+  onOpenSite: () => void;
+}) {
+  return (
+    <section className="group">
+      <div className="group__card">
+        <button type="button" className="howto__toggle" aria-expanded={open} onClick={onToggle}>
+          <span>{title}</span>
+          <span className="howto__chev" aria-hidden="true">
+            {open ? "−" : "+"}
+          </span>
+        </button>
+        {open ? (
+          <ol className="howto">
+            {steps.map((step, i) => (
+              <li key={step.text} className="howto__step">
+                <span className="howto__num" aria-hidden="true">
+                  {i + 1}
+                </span>
+                <div className="howto__text">
+                  <p className="howto__main">{t(step.text)}</p>
+                  {step.detail ? <p className="howto__detail">{t(step.detail)}</p> : null}
+                  {i === 0 ? (
+                    <button type="button" className="btn btn--ghost btn--sm howto__open" onClick={onOpenSite}>
+                      {openLabel}
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/** 录音占了多少地方，按课删。删之前要再点一次 */
+function AudioUsage({ Row }: Pick<Parts, "Row">) {
+  const list = useLectureHistory().filter((e) => (e.audioBytes ?? 0) > 0);
+  const total = list.reduce((sum, e) => sum + (e.audioBytes ?? 0), 0);
+  const [open, setOpen] = useState(false);
+  const [armed, setArmed] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (armed === null) return;
+    const timer = window.setTimeout(() => setArmed(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
+
+  const remove = (id: string) => {
+    if (armed !== id) {
+      setArmed(id);
+      return;
+    }
+    setArmed(null);
+    setError("");
+    void lecture.removeAudio(id).then((err) => err && setError(tMsg(err)));
+  };
+
+  return (
+    <>
+      <Row
+        label={t("录音占的空间")}
+        detail={
+          list.length === 0
+            ? t("这台电脑上还没有录音。")
+            : t("{n} 节课的录音。删掉录音不影响笔记，只是不能再听原声、不能用录音重新整理。", { n: list.length })
+        }
+      >
+        <span className="row__note">{list.length === 0 ? "0 MB" : sizeText(total)}</span>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          disabled={list.length === 0}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? t("收起") : t("看看是哪些")}
+        </button>
+      </Row>
+      {error ? <p className="row__error keyfield__error">{error}</p> : null}
+      {open
+        ? list.map((entry) => {
+            const d = new Date(entry.startedAt);
+            return (
+              <div key={entry.id} className="row row--sub">
+                <div className="row__label">
+                  {t("{m}月{d}日", { m: d.getMonth() + 1, d: d.getDate() })} {entry.course}
+                </div>
+                <div className="row__end">
+                  <span className="row__note">{sizeText(entry.audioBytes ?? 0)}</span>
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => remove(entry.id)}>
+                    {armed === entry.id ? t("再点一次就删") : t("删掉录音")}
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        : null}
+    </>
+  );
+}
+
 export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Props) {
   const [show, setShow] = useState(false);
   const [showGroq, setShowGroq] = useState(false);
@@ -114,6 +221,9 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
   const [groqResult, setGroqResult] = useState<{ ok: boolean; text: string } | null>(null);
   const groq = s.lectureAsr === "groq";
   const usingMic = s.lectureSource === "mic";
+  // 教程平时折着；进来时密钥还没填就先展开
+  const [howto, setHowto] = useState(!s.lectureKey.trim());
+  const [howtoGroq, setHowtoGroq] = useState(false);
 
   const checkGroq = async () => {
     setCheckingGroq(true);
@@ -147,10 +257,14 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
     }
   };
 
+  /** 试一下的结果：成了打勾、没成打叉，写在按钮下面一行，放得下长句子 */
+  const verdict = (r: { ok: boolean; text: string } | null) =>
+    r ? <p className={r.ok ? "row__verdict is-ok" : "row__verdict is-bad"}>{r.text}</p> : null;
+
   return (
     <>
       <Group title={t("DeepSeek 密钥")}>
-        <Row label={t("密钥")}>
+        <Row label={t("密钥")} detail={t("听写、翻译和整理笔记都用它。只存在这台电脑上，换电脑要再填一次。")}>
           <div className="keyfield">
             <input
               className="field field--setting keyfield__input"
@@ -177,7 +291,7 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             </button>
           </Row>
         ) : null}
-        <Row label={result ? result.text : t("填好以后试一下能不能用")}>
+        <Row label={t("试一下能不能用")}>
           <button
             type="button"
             className="btn btn--ghost btn--sm"
@@ -187,11 +301,20 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             {checking ? t("正在试") : t("试一下")}
           </button>
         </Row>
-        {result && !result.ok ? <p className="row__error keyfield__error">{result.text}</p> : null}
+        {verdict(result)}
       </Group>
 
+      <Howto
+        title={t("怎么申请 DeepSeek 密钥")}
+        steps={STEPS}
+        open={howto}
+        onToggle={() => setHowto(!howto)}
+        openLabel={t("打开 DeepSeek 开放平台")}
+        onOpenSite={() => call("lecture_open_platform")}
+      />
+
       <Group title={t("听写")}>
-        <Explained
+        <Row
           label={t("听写用哪个")}
           detail={
             groq
@@ -209,7 +332,7 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             ]}
             onChange={(lectureAsr) => update({ lectureAsr })}
           />
-        </Explained>
+        </Row>
         {groq ? (
           <>
             <Row label={t("Groq 密钥")}>
@@ -233,14 +356,12 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
               </div>
             </Row>
             <Row
-              label={
-                groqResult
-                  ? groqResult.text
-                  : s.lectureGroqKey.trim()
-                    ? t("填好以后试一下能不能用")
-                    : t("还没填，现在还是用 DeepSeek 听写")
-              }
+              label={t("试一下能不能用")}
+              detail={s.lectureGroqKey.trim() ? undefined : t("还没填，现在还是用 DeepSeek 听写。")}
             >
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setHowtoGroq(!howtoGroq)}>
+                {t("怎么申请")}
+              </button>
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
@@ -250,15 +371,15 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
                 {checkingGroq ? t("正在试") : t("试一下")}
               </button>
             </Row>
-            {groqResult && !groqResult.ok ? <p className="row__error keyfield__error">{groqResult.text}</p> : null}
+            {verdict(groqResult)}
           </>
         ) : null}
-        <Explained
+        <Row
           label={t("老师讲课的语言")}
           detail={
             s.lectureLanguage === "en"
               ? t("听成别的语言的地方算没听清：不翻译、不进笔记。")
-              : t("不限语言，听成什么就是什么。")
+              : t("听成什么就是什么，不过滤。听课是按英文课做的，别的语言的课效果没有保证。")
           }
         >
           <Segmented<Settings["lectureLanguage"]>
@@ -267,15 +388,26 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             value={s.lectureLanguage}
             options={[
               { value: "en", label: t("英文") },
-              { value: "auto", label: t("不限") },
+              { value: "auto", label: t("不过滤") },
             ]}
             onChange={(lectureLanguage) => update({ lectureLanguage })}
           />
-        </Explained>
+        </Row>
       </Group>
 
+      {groq ? (
+        <Howto
+          title={t("怎么申请 Groq 密钥")}
+          steps={GROQ_STEPS}
+          open={howtoGroq}
+          onToggle={() => setHowtoGroq(!howtoGroq)}
+          openLabel={t("打开 Groq 控制台")}
+          onOpenSite={() => call("lecture_open_platform", { site: "groq" })}
+        />
+      ) : null}
+
       <Group title={t("声音来源")}>
-        <Explained
+        <Row
           label={t("听哪里的声音")}
           detail={
             usingMic
@@ -293,86 +425,50 @@ export function LecturePrefsPage({ settings: s, update, Group, Row, Toggle }: Pr
             ]}
             onChange={(lectureSource) => update({ lectureSource })}
           />
-        </Explained>
+        </Row>
         {usingMic ? (
           <>
             <Row label={t("用哪个麦克风")}>
               <MicPicker value={s.lectureMic} onChange={(lectureMic) => update({ lectureMic })} />
             </Row>
-            <Explained
+            <Row
               label={t("降噪")}
               detail={t("去掉空调、风扇这类一直响的声音。声音本来就清楚时别开，会把人声削坏，听写更容易出错。")}
             >
               <Toggle label={t("降噪")} on={s.lectureDenoise} onChange={(lectureDenoise) => update({ lectureDenoise })} />
-            </Explained>
+            </Row>
           </>
         ) : null}
       </Group>
 
-      <Group title={t("听课")}>
-        <Row label={t("上课时间到了问一下要不要开始听课")}>
+      <Group title={t("录音")}>
+        <Row
+          label={t("保存录音")}
+          detail={t("存了以后能点每句话听原声、下课后用录音重新整理（更准）。只存在这台电脑上，不同步，一小时大约 30 MB。")}
+        >
           <Toggle
-            label={t("上课时间到了问一下要不要开始听课")}
-            on={s.lectureAsk}
-            onChange={(lectureAsk) => update({ lectureAsk })}
-          />
-        </Row>
-        <Row label={t("保存录音，只存在这台电脑上")}>
-          <Toggle
-            label={t("保存录音，只存在这台电脑上")}
+            label={t("保存录音")}
             on={s.lectureSaveAudio}
-            onChange={(lectureSaveAudio) => update({ lectureSaveAudio })}
+            onChange={(lectureSaveAudio) => update({ lectureSaveAudio, lectureAudioAsked: true })}
+          />
+        </Row>
+        <AudioUsage Row={Row} />
+      </Group>
+
+      <Group title={t("花费")}>
+        <Row label={t("花了多少按什么显示")} detail={t("听课页上的花费是按标价估的。人民币按 1 美元约 7.2 元换算，只是个大概。")}>
+          <Segmented<Settings["lectureCurrency"]>
+            small
+            label={t("花了多少按什么显示")}
+            value={s.lectureCurrency}
+            options={[
+              { value: "cny", label: t("人民币") },
+              { value: "usd", label: t("美元") },
+            ]}
+            onChange={(lectureCurrency) => update({ lectureCurrency })}
           />
         </Row>
       </Group>
-
-      <Group title={t("怎么申请 DeepSeek 密钥")}>
-        <ol className="howto">
-          {STEPS.map((step, i) => (
-            <li key={step.text} className="howto__step">
-              <span className="howto__num" aria-hidden="true">
-                {i + 1}
-              </span>
-              <div className="howto__text">
-                <p className="howto__main">{t(step.text)}</p>
-                {step.detail ? <p className="howto__detail">{t(step.detail)}</p> : null}
-                {i === 0 ? (
-                  <button type="button" className="btn btn--ghost btn--sm howto__open" onClick={() => call("lecture_open_platform")}>
-                    {t("打开 DeepSeek 开放平台")}
-                  </button>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </Group>
-
-      {groq ? (
-        <Group title={t("怎么申请 Groq 密钥")}>
-          <ol className="howto">
-            {GROQ_STEPS.map((step, i) => (
-              <li key={step.text} className="howto__step">
-                <span className="howto__num" aria-hidden="true">
-                  {i + 1}
-                </span>
-                <div className="howto__text">
-                  <p className="howto__main">{t(step.text)}</p>
-                  {step.detail ? <p className="howto__detail">{t(step.detail)}</p> : null}
-                  {i === 0 ? (
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--sm howto__open"
-                      onClick={() => call("lecture_open_platform", { site: "groq" })}
-                    >
-                      {t("打开 Groq 控制台")}
-                    </button>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ol>
-        </Group>
-      ) : null}
     </>
   );
 }

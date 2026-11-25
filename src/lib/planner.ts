@@ -33,6 +33,8 @@ export interface Deadline {
   /** "2026-11-26" */
   due: string;
   done: boolean;
+  /** 提前几天再提醒一次，0 或没有是不另外提前 */
+  remindDays?: number;
 }
 
 export interface Note {
@@ -155,7 +157,8 @@ export const planner = {
   importCourses: (courses: CourseInput[], replace: boolean) =>
     run("courses_import", { courses, replace }),
   clearCourses: () => run("courses_clear"),
-  addDeadline: (title: string, due: string) => run("deadline_add", { title, due }),
+  /** remindDays：提前几天再提醒一次（前一天晚上和当天早上那两次照常） */
+  addDeadline: (title: string, due: string, remindDays = 0) => run("deadline_add", { title, due, remindDays }),
   setDeadlineDone: (id: string, done: boolean) => run("deadline_set_done", { id, done }),
   addNote: (text: string) => run("note_add", { text }),
   noteToTask: (id: string) => run("note_to_task", { id }),

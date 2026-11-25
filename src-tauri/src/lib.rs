@@ -839,6 +839,7 @@ pub fn run() {
             lecture::lecture_summarize,
             lecture::lecture_set_key,
             lecture::lecture_set_asr,
+            lecture::lecture_delete_audio,
             lecture::lecture_inputs,
             lecture::lecture_check_groq_key,
             lecture::lecture_open,

@@ -5,6 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -12,7 +13,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { ambientName, setAmbientPreview, toggleAmbient, useAmbient } from "../lib/ambient";
+import { ambientName, setAmbientPreview, sortAmbient, toggleAmbient, useAmbient } from "../lib/ambient";
 import {
   removeBackground,
   saveBackground,
@@ -76,18 +77,19 @@ export type Category =
   | "keys"
   | "general";
 
-const CATEGORIES: { id: Category; name: string }[] = [
-  { id: "timer", name: "计时" },
-  { id: "schedule", name: "课表" },
-  { id: "alert", name: "提醒" },
-  { id: "translate", name: "翻译" },
-  { id: "ambient", name: "环境音" },
-  { id: "look", name: "外观" },
-  { id: "widget", name: "小组件" },
-  { id: "sleep", name: "睡眠模式" },
-  { id: "lecture", name: "听课" },
-  { id: "keys", name: "快捷键" },
-  { id: "general", name: "通用" },
+// 分三组，组和组之间隔开：功能、声音和外观、系统
+const CATEGORIES: { id: Category; name: string; group: number }[] = [
+  { id: "timer", name: "计时", group: 0 },
+  { id: "schedule", name: "课表", group: 0 },
+  { id: "lecture", name: "听课", group: 0 },
+  { id: "translate", name: "翻译", group: 0 },
+  { id: "ambient", name: "环境音", group: 1 },
+  { id: "sleep", name: "睡眠模式", group: 1 },
+  { id: "look", name: "外观", group: 1 },
+  { id: "widget", name: "小组件", group: 1 },
+  { id: "alert", name: "提醒", group: 2 },
+  { id: "keys", name: "快捷键", group: 2 },
+  { id: "general", name: "通用", group: 2 },
 ];
 
 const SOUNDS: { id: SoundId; name: string }[] = [
@@ -115,11 +117,26 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
   );
 }
 
-function Row({ label, wrap, children }: { label: string; wrap?: boolean; children: ReactNode }) {
+/**
+ * 一行设置。名字只能显示一行（放不下会截断），所以名字写短，要解释的话放 detail：
+ * 显示在下面一行小字里，会自己换行。
+ */
+function Row({
+  label,
+  wrap,
+  detail,
+  children,
+}: {
+  label: string;
+  wrap?: boolean;
+  detail?: string;
+  children: ReactNode;
+}) {
   return (
-    <div className={wrap ? "row row--wrap" : "row"}>
+    <div className={wrap || detail ? "row row--wrap" : "row"}>
       <div className="row__label">{label}</div>
       <div className="row__end">{children}</div>
+      {detail ? <div className="row__detail">{detail}</div> : null}
     </div>
   );
 }
@@ -256,56 +273,40 @@ function TimerPage({ settings, update }: PageProps) {
           </Row>
         ) : null}
       </Group>
+      <Group title={t("专注时")}>
+        <Row label={t("收起两边")} detail={t("专注开始后只留倒计时、下节课和杂念箱；暂停或休息时展开。")}>
+          <Toggle
+            label={t("收起两边")}
+            on={settings.focusLayout}
+            onChange={(focusLayout) => update({ focusLayout })}
+          />
+        </Row>
+      </Group>
     </>
   );
 }
 
 function SchedulePrefsPage({ settings, update }: PageProps) {
-  const lead = settings.classLead;
+  const travel = settings.travelMin;
   return (
     <>
-      <Group title={t("上课")}>
-        <Row label={t("课前多久提醒，也是留给路上的时间")}>
+      <Group title={t("空档")}>
+        <Row label={t("去教室路上要花多久")} detail={t("算一段空档放得下几个番茄时，课前留出这么久。上课提醒在“提醒”页里另外设。")}>
           <Slider
-            value={lead}
+            value={travel}
             min={0}
-            max={30}
+            max={60}
             step={5}
-            label={t("课前多久提醒，也是留给路上的时间")}
-            text={lead === 0 ? t("不提醒") : t("{n} 分钟", { n: lead })}
-            onChange={(classLead) => update({ classLead })}
+            label={t("去教室路上要花多久")}
+            text={travel === 0 ? t("不留") : t("{n} 分钟", { n: travel })}
+            onChange={(travelMin) => update({ travelMin })}
           />
         </Row>
-        <Row label={t("离下节课不够一个番茄时提示改短这一段")}>
+        <Row label={t("不够一个番茄时提示改短")} detail={t("还没开始的专注，离下节课不够一段时，给一个“这一段改成几分钟”的按钮。")}>
           <Toggle
-            label={t("离下节课不够一个番茄时提示改短这一段")}
+            label={t("不够一个番茄时提示改短")}
             on={settings.gapHint}
             onChange={(gapHint) => update({ gapHint })}
-          />
-        </Row>
-      </Group>
-      <Group title={t("提醒")}>
-        <Row label={t("截止日期前一天晚上和当天早上提醒")}>
-          <Toggle
-            label={t("截止日期前一天晚上和当天早上提醒")}
-            on={settings.deadlineRemind}
-            onChange={(deadlineRemind) => update({ deadlineRemind })}
-          />
-        </Row>
-        <Row label={t("排进空档的任务到点时提醒")}>
-          <Toggle
-            label={t("排进空档的任务到点时提醒")}
-            on={settings.blockRemind}
-            onChange={(blockRemind) => update({ blockRemind })}
-          />
-        </Row>
-      </Group>
-      <Group title={t("专注时")}>
-        <Row label={t("收起两边，只留倒计时、下节课和杂念箱")}>
-          <Toggle
-            label={t("收起两边，只留倒计时、下节课和杂念箱")}
-            on={settings.focusLayout}
-            onChange={(focusLayout) => update({ focusLayout })}
           />
         </Row>
       </Group>
@@ -342,6 +343,10 @@ function TextRow({
   );
 }
 
+/** 听课用的 DeepSeek 接口：翻译小窗想用同一个密钥时填这两项 */
+const DEEPSEEK_BASE = "https://api.deepseek.com/v1";
+const DEEPSEEK_MODEL = "deepseek-flash";
+
 function TranslatePage({ settings, update }: PageProps) {
   const llm = settings.trLlm;
   const setLlm = (patch: Partial<typeof llm>) => update({ trLlm: { ...llm, ...patch } });
@@ -349,7 +354,14 @@ function TranslatePage({ settings, update }: PageProps) {
   return (
     <>
       <Group title={t("翻译引擎")}>
-        <Row label={settings.trEngine === "llm" ? t("用自己的 OpenAI 兼容接口") : t("Google 翻译，连不上时换 MyMemory")}>
+        <Row
+          label={t("用哪个")}
+          detail={
+            settings.trEngine === "llm"
+              ? t("用自己的 OpenAI 兼容接口，填下面三项。")
+              : t("Google 翻译，连不上时换 MyMemory。不用填什么。")
+          }
+        >
           <Segmented<TranslateEngine>
             small
             label={t("翻译引擎")}
@@ -382,6 +394,20 @@ function TranslatePage({ settings, update }: PageProps) {
               placeholder="gpt-4o-mini"
               onChange={(model) => setLlm({ model })}
             />
+            {settings.lectureKey.trim() ? (
+              <Row label={t("和听课用同一个")} detail={t("把听课的 DeepSeek 密钥、接口地址和模型填到上面三项里，不用再填一次。")}>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  disabled={llm.apiKey === settings.lectureKey.trim() && llm.baseUrl === DEEPSEEK_BASE}
+                  onClick={() =>
+                    setLlm({ baseUrl: DEEPSEEK_BASE, apiKey: settings.lectureKey.trim(), model: DEEPSEEK_MODEL })
+                  }
+                >
+                  {llm.apiKey === settings.lectureKey.trim() && llm.baseUrl === DEEPSEEK_BASE ? t("已经在用") : t("用 DeepSeek")}
+                </button>
+              </Row>
+            ) : null}
           </>
         ) : null}
       </Group>
@@ -410,6 +436,7 @@ function TranslatePage({ settings, update }: PageProps) {
 }
 
 function AlertPage({ settings, update }: PageProps) {
+  const lead = settings.classLead;
   return (
     <>
       <Group title={t("提示音")}>
@@ -444,7 +471,7 @@ function AlertPage({ settings, update }: PageProps) {
           />
         </Row>
       </Group>
-      <Group title={t("到点时")}>
+      <Group title={t("一段专注或休息结束时")}>
         <Row label={t("发系统通知")}>
           <Toggle
             label={t("发系统通知")}
@@ -457,6 +484,42 @@ function AlertPage({ settings, update }: PageProps) {
             label={t("把主窗口叫出来")}
             on={settings.raiseWindow}
             onChange={(raiseWindow) => update({ raiseWindow })}
+          />
+        </Row>
+      </Group>
+      <Group title={t("上课")}>
+        <Row label={t("课前多久提醒")} detail={t("上课前发一条系统通知。")}>
+          <Slider
+            value={lead}
+            min={0}
+            max={30}
+            step={5}
+            label={t("课前多久提醒")}
+            text={lead === 0 ? t("不提醒") : t("{n} 分钟", { n: lead })}
+            onChange={(classLead) => update({ classLead })}
+          />
+        </Row>
+        <Row label={t("上课时问要不要听课")} detail={t("上课时间到了，主界面上问一句要不要开始听课；到了下课时间也会问一句下课了没有。")}>
+          <Toggle
+            label={t("上课时问要不要听课")}
+            on={settings.lectureAsk}
+            onChange={(lectureAsk) => update({ lectureAsk })}
+          />
+        </Row>
+      </Group>
+      <Group title={t("截止日期和待办")}>
+        <Row label={t("截止日期提醒")} detail={t("前一天晚上 8 点和当天早上 9 点各提醒一次。每个截止日期还可以另选提前几天再提醒一次。")}>
+          <Toggle
+            label={t("截止日期提醒")}
+            on={settings.deadlineRemind}
+            onChange={(deadlineRemind) => update({ deadlineRemind })}
+          />
+        </Row>
+        <Row label={t("排进空档的待办到点提醒")}>
+          <Toggle
+            label={t("排进空档的待办到点提醒")}
+            on={settings.blockRemind}
+            onChange={(blockRemind) => update({ blockRemind })}
           />
         </Row>
       </Group>
@@ -475,7 +538,7 @@ function AmbientPage({ settings, update }: PageProps) {
   return (
     <>
       <Group title={t("什么时候放")}>
-        <Row label={t("专注时播放环境音")}>
+        <Row label={t("专注时播放环境音")} detail={t("计时走着才响。睡眠模式有自己的一套声音，在“睡眠模式”页里调。")}>
           <Toggle label={t("专注时播放环境音")} on={settings.ambientOn} onChange={toggleAmbient} />
         </Row>
         <Row label={t("休息时也播放")}>
@@ -492,7 +555,7 @@ function AmbientPage({ settings, update }: PageProps) {
             <div className="row__note">{t("还没有可以用的环境音")}</div>
           </div>
         ) : null}
-        {list.map((id) => {
+        {sortAmbient(list, (id) => id).map((id) => {
           const percent = Math.round((settings.ambientMix[id] ?? 0) * 100);
           return (
             <Row key={id} label={ambientName(id)}>
@@ -508,9 +571,7 @@ function AmbientPage({ settings, update }: PageProps) {
             </Row>
           );
         })}
-      </Group>
-      <Group>
-        <Row label={t("现在这样搭配是什么声音")}>
+        <Row label={t("听听现在这样搭配")}>
           <button
             type="button"
             className={preview ? "btn btn--primary btn--sm" : "btn btn--ghost btn--sm"}
@@ -813,31 +874,27 @@ function WidgetPage({ settings, update }: PageProps) {
                 onChange={(layer) => patchWidget({ layer })}
               />
             </Row>
-            <Row label={t("锁定，鼠标穿过去点不到它")}>
+            <Row label={t("锁定")} detail={t("锁上以后鼠标穿过去，点不到它，也拖不动。")}>
               <Toggle
-                label={t("锁定，鼠标穿过去点不到它")}
+                label={t("锁定")}
                 on={widget.locked}
                 disabled={!widget.open}
                 onChange={(locked) => patchWidget({ locked })}
               />
             </Row>
+            <Row label={t("位置")}>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                disabled={!placed}
+                onClick={() => patchWidget({ x: null, y: null })}
+              >
+                {t("放回屏幕右下角")}
+              </button>
+            </Row>
           </>
         )}
       </Group>
-      {notch ? null : (
-        <Group>
-          <Row label={t("位置")}>
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              disabled={!placed}
-              onClick={() => patchWidget({ x: null, y: null })}
-            >
-              {t("放回屏幕右下角")}
-            </button>
-          </Row>
-        </Group>
-      )}
     </>
   );
 }
@@ -934,9 +991,7 @@ function KeysPage({ settings, update }: PageProps) {
             failed={failed.has(id)}
           />
         ))}
-      </Group>
-      <Group>
-        <Row label={t("恢复默认的快捷键")}>
+        <Row label={t("全部改回原来的")}>
           <button
             type="button"
             className="btn btn--ghost btn--sm"
@@ -1121,6 +1176,7 @@ interface Restored {
   tasks: number;
   courses: number;
   history: number;
+  lectures: number;
 }
 
 /** 备份：导出成一个文件，或者从文件导回来（并进现在的数据，不覆盖） */
@@ -1140,10 +1196,11 @@ function BackupRow() {
         const got = await invoke<Restored | null>(command);
         if (got) {
           setNote(
-            t("已导入：{n} 个任务、{m} 节课、{k} 条新的专注记录", {
+            t("已导入：{n} 个任务、{m} 节课、{k} 条新的专注记录、{l} 份新的听课笔记", {
               n: got.tasks,
               m: got.courses,
               k: got.history,
+              l: got.lectures,
             }),
           );
         }
@@ -1156,7 +1213,7 @@ function BackupRow() {
   };
 
   return (
-    <Row label={t("备份")}>
+    <Row label={t("备份")} detail={t("待办、课表、截止日期、生词、专注记录和听课笔记存成一个文件；录音不在里面。导回来是并进现在的数据，不覆盖。")}>
       {error ? <span className="row__error">{error}</span> : note ? <span className="row__note">{note}</span> : null}
       <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={() => void run("backup_import")}>
         {t("导入")}
@@ -1227,8 +1284,35 @@ function GeneralPage({ settings, update }: PageProps) {
   else if (updateState.kind === "downloading") updateButton = t("正在更新");
   else if (updateState.kind === "failed") updateButton = t("再试一次");
 
+  // 结果一眼看得出好坏：成了打勾、没成打叉
+  const updateTone =
+    updateState.kind === "latest"
+      ? " is-ok"
+      : updateState.kind === "error" || updateState.kind === "failed"
+        ? " is-bad"
+        : "";
+  const updateGroup = (
+      <Group title={t("更新")}>
+        <Row label={t("软件更新")}>
+          {updateNote ? <span className={`row__note${updateTone}`}>{updateNote}</span> : null}
+          <button
+            type="button"
+            className={canInstall ? "btn btn--primary btn--sm" : "btn btn--ghost btn--sm"}
+            disabled={updateState.kind === "checking" || updateState.kind === "downloading"}
+            onClick={() => void (canInstall ? installUpdate() : checkUpdate())}
+          >
+            {updateButton}
+          </button>
+        </Row>
+      </Group>
+  );
+  // 有新版本（或者正在下、没装上）时提到最上面，不用滚到底才看见
+  const updateFirst =
+    updateState.kind === "available" || updateState.kind === "downloading" || updateState.kind === "failed";
+
   return (
     <>
+      {updateFirst ? updateGroup : null}
       <Group title={t("语言")}>
         <Row label={t("界面语言")}>
           <Segmented<Lang>
@@ -1294,19 +1378,7 @@ function GeneralPage({ settings, update }: PageProps) {
           </button>
         </Row>
       </Group>
-      <Group title={t("更新")}>
-        <Row label={t("软件更新")}>
-          {updateNote ? <span className="row__note">{updateNote}</span> : null}
-          <button
-            type="button"
-            className={canInstall ? "btn btn--primary btn--sm" : "btn btn--ghost btn--sm"}
-            disabled={updateState.kind === "checking" || updateState.kind === "downloading"}
-            onClick={() => void (canInstall ? installUpdate() : checkUpdate())}
-          >
-            {updateButton}
-          </button>
-        </Row>
-      </Group>
+      {updateFirst ? null : updateGroup}
     </>
   );
 }
@@ -1339,16 +1411,18 @@ export function SettingsPanel({ initial, onClose, onPreview }: Props) {
     <div className="settings glass glass--thick" role="dialog" aria-modal="true" aria-label={t("设置")}>
       <nav className="settings__nav">
         <h2 className="settings__title">{t("设置")}</h2>
-        {CATEGORIES.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className="navitem"
-            aria-current={c.id === category}
-            onClick={() => setCategory(c.id)}
-          >
-            {t(c.name)}
-          </button>
+        {CATEGORIES.map((c, i) => (
+          <Fragment key={c.id}>
+            {i > 0 && CATEGORIES[i - 1].group !== c.group ? <div className="settings__sep" aria-hidden="true" /> : null}
+            <button
+              type="button"
+              className="navitem"
+              aria-current={c.id === category}
+              onClick={() => setCategory(c.id)}
+            >
+              {t(c.name)}
+            </button>
+          </Fragment>
         ))}
         <div className="settings__credit">Made by Ingram &amp; Claude</div>
       </nav>

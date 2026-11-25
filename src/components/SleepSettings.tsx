@@ -21,7 +21,7 @@ import { IconCheck } from "./Icons";
 
 interface Parts {
   Group: ComponentType<{ title?: string; children: ReactNode }>;
-  Row: ComponentType<{ label: string; wrap?: boolean; children: ReactNode }>;
+  Row: ComponentType<{ label: string; wrap?: boolean; detail?: string; children: ReactNode }>;
   Toggle: ComponentType<{ on: boolean; label: string; disabled?: boolean; onChange: (on: boolean) => void }>;
   Slider: ComponentType<{
     value: number;
@@ -151,7 +151,7 @@ export function SleepPage({ settings: s, update, Group, Row, Toggle, Slider }: P
   return (
     <>
       <Group>
-        <Row label={t("整个窗口变成一扇夜里下雨的窗")}>
+        <Row label={t("睡眠模式")} detail={t("整个窗口变成一扇夜里下雨的窗。顶栏的月亮按钮也能打开，Esc 回到主界面。")}>
           <button type="button" className="btn btn--ghost btn--sm" disabled={open} onClick={openSleep}>
             {open ? t("已经开着") : t("打开睡眠模式")}
           </button>
@@ -159,7 +159,7 @@ export function SleepPage({ settings: s, update, Group, Row, Toggle, Slider }: P
       </Group>
 
       <Group title={t("声音")}>
-        <Row label={t("睡眠模式里放声音")}>
+        <Row label={t("睡眠模式里放声音")} detail={t("和专注时的环境音是分开的两套，这里调的只在睡眠模式里响。")}>
           <Toggle label={t("睡眠模式里放声音")} on={s.sleepSound} onChange={(sleepSound) => update({ sleepSound })} />
         </Row>
         {sounds.map(({ id, label }) => {

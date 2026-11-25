@@ -55,8 +55,8 @@ function remaining(task: Task): number {
  * 空档后面是课的话，末尾留出去上课路上的时间。放不下一个番茄就返回空
  */
 export function fitInGap(task: Task, gap: Gap, wanted = remaining(task)): BlockInput | null {
-  const { focusMin, shortMin, classLead } = getSettings();
-  const end = gap.end - (gap.before ? classLead : 0);
+  const { focusMin, shortMin, travelMin } = getSettings();
+  const end = gap.end - (gap.before ? travelMin : 0);
   const room = end - gap.start;
   if (room < focusMin) return null;
   const fits = Math.floor((room + shortMin) / (focusMin + shortMin));

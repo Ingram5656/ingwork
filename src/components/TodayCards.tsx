@@ -45,7 +45,7 @@ export function GapHint() {
   if (!next) return null;
 
   const until = next.start - minute;
-  const usable = until - settings.classLead;
+  const usable = until - settings.travelMin;
   // 一段完整的专注放得下，就不打扰
   if (usable >= length) return null;
   // 再过一会儿就该走了，也不打扰了
@@ -53,7 +53,7 @@ export function GapHint() {
 
   // 改成 5 的倍数，最短 5 分钟
   const suggest = Math.floor(usable / 5) * 5;
-  const lead = settings.classLead > 0 ? t("，留 {n} 分钟去教室", { n: settings.classLead }) : "";
+  const lead = settings.travelMin > 0 ? t("，留 {n} 分钟去教室", { n: settings.travelMin }) : "";
 
   return (
     <div className="hint-pill glass capsule" role="status">
@@ -169,7 +169,7 @@ export function NextClassCard() {
   const until = next.start - minute;
   // 进度条：从提前两小时开始走，走满就该出发了
   const lookahead = 120;
-  const fill = Math.max(0, Math.min(1, 1 - (until - settings.classLead) / lookahead));
+  const fill = Math.max(0, Math.min(1, 1 - (until - settings.travelMin) / lookahead));
   return (
     <section className="focus-card glass" aria-label={t("下节课")}>
       <div className="focus-card__label">{t("下节课")}</div>

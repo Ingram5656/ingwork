@@ -86,11 +86,23 @@ export function costOf(u: LectureUsage | undefined): number {
 }
 
 /** "$0.03"；太少就写"不到 $0.01" */
+/** 1 美元大约多少人民币：只用来把估出来的花费换个单位显示，汇率变多了改这里 */
+const CNY_PER_USD = 7.2;
+
+/** 把美元数写成设置里选的那种钱 */
+export function moneyText(usd: number): string {
+  if (usd <= 0) return "";
+  if (getSettings().lectureCurrency === "cny") {
+    const yuan = usd * CNY_PER_USD;
+    if (yuan < 0.01) return t("不到 ¥0.01");
+    return `¥${yuan.toFixed(2)}`;
+  }
+  if (usd < 0.01) return t("不到 $0.01");
+  return `$${usd.toFixed(2)}`;
+}
+
 export function costText(u: LectureUsage | undefined): string {
-  const c = costOf(u);
-  if (c <= 0) return "";
-  if (c < 0.01) return t("不到 $0.01");
-  return `$${c.toFixed(2)}`;
+  return moneyText(costOf(u));
 }
 
 export interface LectureState {
@@ -141,6 +153,9 @@ export interface LectureEntry {
   listenedMs: number;
   /** 一句话的总结，列表里显示 */
   summary: string;
+  usage?: LectureUsage;
+  /** 这台电脑上这节课的录音有多大（字节），没有是 0 */
+  audioBytes?: number;
 }
 
 const EMPTY: LectureState = {
@@ -273,6 +288,24 @@ export const lecture = {
       () => null,
       (e) => String(e),
     ),
+  /** 删掉一节课的笔记（连同这台电脑上的录音）。不行的话返回中文说明 */
+  remove: (id: string) =>
+    invoke("lecture_remove", { id }).then(
+      () => {
+        bumpHistory();
+        return null;
+      },
+      (e) => String(e),
+    ),
+  /** 只删录音，笔记留着 */
+  removeAudio: (id: string) =>
+    invoke("lecture_delete_audio", { id }).then(
+      () => {
+        bumpHistory();
+        return null;
+      },
+      (e) => String(e),
+    ),
   pause: () => call("lecture_pause"),
   resume: () => call("lecture_resume"),
   /** 结束：停止录音，把整节课完整整理成笔记 */
@@ -303,22 +336,58 @@ export const lecture = {
     ),
   /** 打开以前的一份笔记 */
   open: (id: string) => call("lecture_open", { id }),
-  remove: (id: string) => call("lecture_remove", { id }),
   /** 导出成 Markdown 文件（笔记加上整节课的中英对照），返回 false 是取消了 */
   exportMarkdown: (s: LectureState) =>
     invoke<boolean>("lecture_export", { name: s.course, content: notesMarkdown(s, true) }),
 };
 
+// 删了笔记或录音以后，列表要重新读一遍
+let historyTick = 0;
+const historyListeners = new Set<() => void>();
+function bumpHistory(): void {
+  historyTick += 1;
+  historyListeners.forEach((listener) => listener());
+}
+
 /** 以前的笔记，新的在前 */
 export function useLectureHistory(): LectureEntry[] {
   const [list, setList] = useState<LectureEntry[]>([]);
   const { status, notesAt } = useLecture();
+  const tick = useSyncExternalStore(
+    (listener) => {
+      historyListeners.add(listener);
+      return () => {
+        historyListeners.delete(listener);
+      };
+    },
+    () => historyTick,
+  );
   useEffect(() => {
     invoke<LectureEntry[]>("lecture_list")
       .then((got) => setList(got ?? []))
       .catch(() => setList([]));
-  }, [status, notesAt]);
+  }, [status, notesAt, tick]);
   return list;
+}
+
+/** 这个月听了几节课、一共大概花了多少（美元） */
+export function monthTotal(list: LectureEntry[], now: Date): { count: number; usd: number } {
+  let count = 0;
+  let usd = 0;
+  for (const entry of list) {
+    const d = new Date(entry.startedAt);
+    if (d.getFullYear() !== now.getFullYear() || d.getMonth() !== now.getMonth()) continue;
+    count += 1;
+    usd += costOf(entry.usage);
+  }
+  return { count, usd };
+}
+
+/** 文件大小写成人看的：312 KB、28 MB、1.2 GB */
+export function sizeText(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 /** 笔记 → Markdown（复制用）。withTranscript：后面附上整节课的中英对照（导出用） */

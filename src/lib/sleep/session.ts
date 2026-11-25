@@ -8,15 +8,15 @@ import { useSyncExternalStore } from "react";
 import { setSleepAmbient } from "../ambient";
 import { getSettings, subscribeSettings, updateSettings } from "../settings";
 
-/** 睡眠模式里有哪些环境音，按这个顺序列（后端的 sounds/ambient 里得有这个文件） */
+/** 睡眠模式里有哪些环境音（后端的 sounds/ambient 里得有这个文件）。顺序和设置里"环境音"那页一样 */
 export const SLEEP_SOUNDS: { id: string; label: string }[] = [
   { id: "rain", label: "雨声" },
   { id: "waves", label: "海浪" },
-  { id: "brown", label: "褐噪音" },
-  { id: "white", label: "白噪音" },
+  { id: "wind", label: "风声" },
   { id: "birds", label: "鸟声" },
   { id: "traffic", label: "车声" },
-  { id: "wind", label: "风声" },
+  { id: "white", label: "白噪音" },
+  { id: "brown", label: "褐噪音" },
 ];
 
 /** 几个文件本身响度不一样，这里拉平；白噪音听着刺耳，压低一些 */

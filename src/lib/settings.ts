@@ -134,6 +134,8 @@ export interface Settings {
   page: Page;
   /** 上课前几分钟提醒，也是路上要留的时间。0 是不提醒 */
   classLead: number;
+  /** 去教室路上要花多久（分钟）：算空档放得下几个番茄时，课前留出这么久 */
+  travelMin: number;
   /** 离下节课不够一个完整番茄时，提示把这一段改短 */
   gapHint: boolean;
   /** 截止日期前一天晚上、当天早上各提醒一次 */
@@ -155,6 +157,10 @@ export interface Settings {
   lectureGroqKey: string;
   /** 老师讲课的语言：英文（听成别的语言的算没听清），或者不限 */
   lectureLanguage: "en" | "auto";
+  /** 听课花了多少按哪种钱显示 */
+  lectureCurrency: "usd" | "cny";
+  /** 问过要不要保存录音了（第一次听课时问一次） */
+  lectureAudioAsked: boolean;
   /** 睡眠模式：雨量 0–100，0 是晴天 */
   sleepRain: number;
   /** 雨往哪边斜（度），-40 到 40 */
@@ -243,6 +249,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
   page: "today",
   classLead: 10,
+  travelMin: 10,
   gapHint: true,
   islandHaptics: true,
   lectureKey: "",
@@ -254,6 +261,8 @@ export const DEFAULT_SETTINGS: Settings = {
   lectureAsr: "deepseek",
   lectureGroqKey: "",
   lectureLanguage: "en",
+  lectureCurrency: "cny",
+  lectureAudioAsked: false,
   sleepRain: 45,
   sleepAngle: -8,
   sleepThunder: false,
@@ -292,6 +301,8 @@ function normalize(saved: Partial<Settings>): Settings {
     widget: { ...base.widget, ...saved.widget },
     trLlm: { ...base.trLlm, ...saved.trLlm },
     sleepAmbient: { ...(saved.sleepAmbient ?? base.sleepAmbient) },
+    // 0.7.0 以前"课前多久提醒"也当路上的时间用：老用户拆开后两边都先沿用原来的数
+    travelMin: saved.travelMin ?? saved.classLead ?? base.travelMin,
   };
 }
 
