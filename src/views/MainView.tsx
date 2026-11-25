@@ -587,7 +587,7 @@ export function MainView() {
             </button>
             <button type="button" className="ibtn" title={t("设置")} aria-label={t("设置")} onClick={openSettings}>
               <IconGear />
-              {updateState.kind === "available" ? <span className="dot" /> : null}
+              {updateState.kind === "available" || updateState.kind === "failed" ? <span className="dot" /> : null}
             </button>
             {/* Mac 上用左上角系统的红黄绿按钮，这里就不放了 */}
             {IS_MAC ? null : <span className="divider" />}

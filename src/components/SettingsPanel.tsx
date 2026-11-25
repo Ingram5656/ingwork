@@ -1214,10 +1214,18 @@ function GeneralPage({ settings, update }: PageProps) {
   else if (updateState.kind === "latest") updateNote = t("已经是最新版本");
   else if (updateState.kind === "available")
     updateNote = t("有新版本 {v}", { v: updateState.info.version });
-  else if (updateState.kind === "downloading") updateNote = t("正在下载，下好会自动开始安装");
-  else if (updateState.kind === "error") updateNote = tMsg(updateState.message);
+  else if (updateState.kind === "downloading")
+    updateNote =
+      updateState.percent === undefined
+        ? t("正在下载，下好会自动开始安装")
+        : t("正在下载 {p}%，下好会自动开始安装", { p: updateState.percent });
+  else if (updateState.kind === "error" || updateState.kind === "failed") updateNote = tMsg(updateState.message);
 
-  const canInstall = updateState.kind === "available";
+  const canInstall = updateState.kind === "available" || updateState.kind === "failed";
+  let updateButton = t("检查更新");
+  if (updateState.kind === "available") updateButton = t("立即更新");
+  else if (updateState.kind === "downloading") updateButton = t("正在更新");
+  else if (updateState.kind === "failed") updateButton = t("再试一次");
 
   return (
     <>
@@ -1295,7 +1303,7 @@ function GeneralPage({ settings, update }: PageProps) {
             disabled={updateState.kind === "checking" || updateState.kind === "downloading"}
             onClick={() => void (canInstall ? installUpdate() : checkUpdate())}
           >
-            {canInstall ? t("立即更新") : t("检查更新")}
+            {updateButton}
           </button>
         </Row>
       </Group>

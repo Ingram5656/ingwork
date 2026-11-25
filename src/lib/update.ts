@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
+import { onEvent } from "./tauri";
 
 export interface UpdateInfo {
   version: string;
@@ -17,7 +18,9 @@ export type UpdateState =
   | { kind: "checking" }
   | { kind: "latest" }
   | { kind: "available"; info: UpdateInfo }
-  | { kind: "downloading"; info: UpdateInfo }
+  | { kind: "downloading"; info: UpdateInfo; percent?: number }
+  /** 下载或安装没成：留着这一版的信息，可以直接再试 */
+  | { kind: "failed"; info: UpdateInfo; message: string }
   | { kind: "error"; message: string };
 
 let state: UpdateState = { kind: "idle" };
@@ -53,14 +56,23 @@ export async function checkUpdate(quiet = false): Promise<void> {
   }
 }
 
+let listening = false;
+
 /** 下载并安装。成功的话软件会自己退出（自动更新时会自己重启），让安装程序接手。 */
 export async function installUpdate(): Promise<void> {
-  if (state.kind !== "available") return;
+  if (state.kind !== "available" && state.kind !== "failed") return;
   const info = state.info;
   set({ kind: "downloading", info });
+  if (!listening) {
+    listening = true;
+    // 后端说下了百分之几
+    onEvent<number>("update-progress", (percent) => {
+      if (state.kind === "downloading") set({ ...state, percent });
+    });
+  }
   try {
     await invoke("install_update", { url: info.url });
   } catch (error) {
-    set({ kind: "error", message: String(error) });
+    set({ kind: "failed", info, message: String(error) });
   }
 }

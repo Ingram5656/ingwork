@@ -260,6 +260,8 @@ export const EN: Record<string, string> = {
   已经是最新版本: "You're up to date",
   "有新版本 {v}": "Version {v} is available",
   "正在下载，下好会自动开始安装": "Downloading. Installation starts when it finishes",
+  "正在下载 {p}%，下好会自动开始安装": "Downloading {p}%. Installation starts when it finishes",
+  "正在更新": "Updating",
   立即更新: "Update now",
   检查更新: "Check for updates",
 

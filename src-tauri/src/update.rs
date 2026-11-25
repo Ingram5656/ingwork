@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// 仓库建好以后如果名字不一样，改这几行。
@@ -164,16 +164,36 @@ const INSTALLER: &str = if cfg!(target_os = "macos") {
 /// 自动更新：下载、核对签名、装好，然后重启。
 /// Windows 上装的时候安装程序会自己把旧的 ingwork 关掉，所以装之前先把没走完的专注记下来
 async fn install_seamless(app: &AppHandle, pending: &Pending) -> Result<(), String> {
+    // 不从 Pending 里拿走：下载、安装没成的话，再点一次"立即更新"就能重试
     let update = pending
         .0
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .take()
+        .clone()
         .ok_or_else(|| "先检查一次更新".to_string())?;
-    let bytes = update.download(|_, _| {}, || {}).await.map_err(|error| {
-        crate::logger::error(&format!("下载更新：{error}"));
-        "新版本没下载下来，请检查网络后再试".to_string()
-    })?;
+    // 下了百分之几，告诉界面（每变 1% 说一次）
+    let mut got: u64 = 0;
+    let mut shown: u64 = u64::MAX;
+    let progress = app.clone();
+    let bytes = update
+        .download(
+            move |chunk, total| {
+                got += chunk as u64;
+                if let Some(total) = total.filter(|t| *t > 0) {
+                    let percent = (got * 100 / total).min(100);
+                    if percent != shown {
+                        shown = percent;
+                        let _ = progress.emit("update-progress", percent);
+                    }
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|error| {
+            crate::logger::error(&format!("下载更新：{error}"));
+            "新版本没下载下来，请检查网络后再试".to_string()
+        })?;
     crate::before_exit(app);
     update.install(bytes).map_err(|error| {
         crate::logger::error(&format!("安装更新：{error}"));
@@ -191,7 +211,10 @@ pub async fn install_update(
     pending: State<'_, Pending>,
     url: String,
 ) -> Result<(), String> {
-    if !PUBKEY.is_empty() {
+    // 按这次查到的是哪一种来装，不是按"自动更新开没开"：自动更新没查成（比如 latest.json 读不到）
+    // 时 check_update 会退回以前的方式、带一个安装包地址，这时也得走以前的方式。
+    // 以前这里只看 PUBKEY，结果点"立即更新"马上报"先检查一次更新"，怎么点都装不了
+    if url.is_empty() {
         return install_seamless(&app, &pending).await;
     }
     // 只下载自己仓库 Release 里的文件

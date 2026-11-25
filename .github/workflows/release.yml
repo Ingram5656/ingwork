@@ -1,5 +1,9 @@
 # 推一个 v 开头的标签（比如 v0.1.0）后，GitHub 在 Windows 和 Mac 上各打一个安装包，
 # 放进一个 Release 草稿。说明取 CHANGELOG.md 里这一版的内容。检查一遍再在网页上点 Publish release。
+#
+# 草稿先单独建好，两个系统再一个接一个地往里传（先 Windows 后 Mac，一共二十分钟左右）。
+# 以前是两边各自"没有草稿就建一个"、同时打包：0.6.2 那次两边几乎同时打完，各建了一个草稿，
+# 发布出去的那个只有 Mac 的包。同时往一个草稿里传也不行，自动更新用的 latest.json 会互相盖掉。
 
 name: release
 
@@ -10,11 +14,58 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 先建好这一版的草稿（已经有了就用现成的），把编号交给后面
+  draft:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 从 CHANGELOG.md 里取这一版的说明：从 "## [0.1.0]" 那一行到下一个 "## " 之前
+      - name: 取这一版的更新说明
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ -z "$(tr -d '[:space:]' < notes.md)" ]; then
+            echo "见 CHANGELOG.md" > notes.md
+          fi
+
+      - name: 建草稿
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$GITHUB_REF_NAME\")][0].id // empty")
+          if [ -z "$id" ]; then
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f name="ingwork $GITHUB_REF_NAME" \
+              -F body=@notes.md \
+              -F draft=true \
+              -F prerelease=false \
+              --jq .id)
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: draft
+    # 手动跑（没有标签）时不建草稿，照样打包试试
+    if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
+      # 一个接一个：同时传的话 latest.json 会互相盖掉
+      max-parallel: 1
       matrix:
         include:
           - platform: windows-latest
@@ -49,7 +100,7 @@ jobs:
       - name: 装依赖
         run: pnpm install --frozen-lockfile
 
-      # 从 CHANGELOG.md 里取这一版的说明：从 "## [0.1.0]" 那一行到下一个 "## " 之前
+      # 这一版的说明也写进 latest.json（软件里检查更新时读得到）
       - name: 取这一版的更新说明
         id: notes
         shell: bash
@@ -78,8 +129,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # 传到上面建好的那个草稿里；tagName 留着，latest.json 里的下载地址要用
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: "ingwork ${{ github.ref_name }}"
+          releaseId: ${{ needs.draft.outputs.id }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
